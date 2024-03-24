@@ -51,7 +51,7 @@ uint8_t * ReadFile(const char * filename, uint32_t * sizePtr/*= NULL*/, uint32_t
 	}
 
 	uint8_t * buffer = (uint8_t *)malloc(size);
-	fread(buffer, 1, size, fp);
+	if (fread(buffer, 1, size, fp));
 	fclose(fp);
 
 	if (sizePtr != NULL)
@@ -248,6 +248,7 @@ bool CheckWOZIntegrity(const uint8_t * wozData, uint32_t wozSize)
 
 	WriteLog("\n");
 
+#if 0
 	uint8_t numTracks = woz.trksSize / sizeof(WOZ1Track);
 
 	// N.B.: Need to check the track in tmap[] to have this tell the correct track...  Right now, it doesn't
@@ -255,6 +256,7 @@ bool CheckWOZIntegrity(const uint8_t * wozData, uint32_t wozSize)
 	{
 		WriteLog("WOZ: Stream %u: %d bits (packed into %d bytes)\n", i, woz.track[i].bitCount, (woz.track[i].bitCount + 7) / 8);
 	}
+#endif
 #endif
 
 	WriteLog("FILEIO: Well formed WOZ file found\n");

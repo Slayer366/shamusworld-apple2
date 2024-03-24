@@ -618,11 +618,11 @@ void InstallHardDrive(uint8_t slot)
 {
 	SlotData hd = { SlotIOR, SlotIOW, SlotROM, 0, SlotIOExtraR, SlotIOExtraW };
 	InstallSlotHandler(slot, &hd);
-	char fnBuf[MAX_PATH + 1];
+	char fnBuf[(MAX_PATH * 2) + 1];
 
 	// If this fails to read the file, the pointer is set to NULL
 	uint32_t size = 0, skip = (uint32_t)-1;
-	sprintf(fnBuf, "%s%s", settings.disksPath, settings.hd[0]);
+	// sprintf(fnBuf, "%s%s", settings.disksPath, settings.hd[0]);
 
 	// Check to see which type of HD image we have...
 	char * ext = strrchr(settings.hd[0], '.');

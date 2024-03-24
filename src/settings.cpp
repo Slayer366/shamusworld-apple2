@@ -61,7 +61,7 @@ void LoadSettings(void)
 	settings.useOpenGL = GetValue("useOpenGL", true);
 	settings.glFilter = GetValue("glFilterType", 0);
 	settings.renderType = GetValue("renderType", 0);
-	settings.autoStateSaving = GetValue("autoSaveState", true);
+	settings.autoStateSaving = GetValue("autoSaveState", false);
 
 	settings.winX = GetValue("windowX", 250);
 	settings.winY = GetValue("windowY", 100);

@@ -1,0 +1,43 @@
+KNOWN ISSUES WITH APPLE2 EMULATOR
+---------------------------------
+
+ - Some disk images don't properly boot when the apple is powered on and *then*
+   a disk is inserted (Ape Escape, Apple Panic).  Could be related to the
+   Infocom squeezed disk format problem (Border Zone, others).
+
+ - Border Zone doesn't read side B properly; there is a synchronization issue
+   where the disk read routines run at 27 cycles per byte while the LSS runs
+   with an OBT (optimal bit timing) of 28.  Eventually, the LSS will run
+   ahead(!) of the 65c02--even though the 65c02 is running a faster loop--
+   resulting in bytes being missed by the 65c02 (sometimes 2 bytes in a row
+   being missed).  Very strange!
+
+ - Inserting a new blank disk in drive #2 doesn't work (the code hasn't been
+   written yet)
+
+ - A new blank disk is given a default name and saved in the same folder as the
+   apple2 executable.  This should at a minimum save the image in the "disks"
+   folder (however that is defined in apple2.cfg); it should also allow the
+   user to set the name of the disk image as well.
+
+ - Saving/loading save states through the GUI doesn't work yet
+
+ - Some (most) config options don't work through the GUI yet
+
+ - Attaching hard drive images can only be done by editing apple2.cfg
+
+ - There is no emulation of 800K drives yet
+
+ - 13 sector disks don't work yet
+
+ - Scrolling though the list of disks to get to one near the end of the list
+   takes a *lot* of clicks.  Should probably make some form of type-ahead
+   filtering to narrow the list down.  Maybe should also sort the disks better
+   as well by ignoring starting articles such as a, an, the, & etc.
+
+ - The disk selector doesn't give you any useful information about the disk
+   you're highlighting (other than the full name at the top of the window); it
+   should probably at a minimum give memory/machine stats for the disk.
+
+ - No support for joysticks of any kind (even emulated Atari sticks via
+   keyboard)

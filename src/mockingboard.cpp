@@ -69,8 +69,8 @@ void MBSaveState(FILE * file)
 
 void MBLoadState(FILE * file)
 {
-	fread(&mb[0], 1, sizeof(struct MOCKINGBOARD), file);
-	fread(&mb[1], 1, sizeof(struct MOCKINGBOARD), file);
+	if (fread(&mb[0], 1, sizeof(struct MOCKINGBOARD), file));
+	if (fread(&mb[1], 1, sizeof(struct MOCKINGBOARD), file));
 }
 
 

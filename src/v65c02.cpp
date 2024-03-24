@@ -28,6 +28,7 @@
 #ifdef __DEBUG__
 #include <string.h>
 #include "dis65c02.h"
+#include "floppydrive.h"
 #include "log.h"
 #endif
 
@@ -2218,7 +2219,6 @@ static void Op__(void)
 	regs->cpuFlags |= V65C02_STATE_ILLEGAL_INST;
 }
 
-
 //
 // Ok, the exec_op[] array is globally defined here basically to save
 // a LOT of unnecessary typing.  Sure it's ugly, but hey, it works!
@@ -2283,7 +2283,6 @@ V65C02REGS btQueue[BACKTRACE_SIZE];
 uint8_t btQueueInst[BACKTRACE_SIZE][4];
 #endif
 
-
 //
 // Function to execute 65C02 for "cycles" cycles
 //
@@ -2297,6 +2296,197 @@ void Execute65C02(V65C02REGS * context, uint32_t cycles)
 
 	while (regs->clock < endCycles)
 	{
+// Ultima I (WTF? This *used* to work! >:-U) [Now it does...  :-P]
+// Turns out it was a problem with PAGE2 changing too much (it ignored the HIRES switch when switching memory, causing code at $2141 to be swapped out with zeroes).
+/*if (regs->pc == 0xC311)
+	dumpDis = true;
+else if (regs->pc == 0x2141)
+	dumpDis = false;*/
+
+#if 0
+// Bard's Tale II
+// Turns out a bug in floppydrive.cpp prevented this from working.  :-P
+static bool hitGo = false;
+
+if (regs->pc == 0xA000)
+{
+	dumpDis = true;
+	hitGo = true;
+}
+
+// $FCA8 also needs to be silenced too ($FCB3 is exit point)
+if (regs->pc == 0xA181 && hitGo)
+{
+	dumpDis = false;
+	WriteLog("*** BT2 DELAY\n");
+}
+else if (regs->pc == 0xA18B && hitGo)
+{
+	dumpDis = true;
+}
+else if (regs->pc == 0xFCA8 && hitGo)
+{
+	dumpDis = false;
+	WriteLog("*** MONITOR DELAY ($FCA8)\n");
+}
+else if (regs->pc == 0xFCB3 && hitGo)
+{
+	dumpDis = true;
+}
+else if (regs->pc == 0xBD11 && hitGo)
+{
+	dumpDis = false;
+	WriteLog("*** BT2 DELAY $BD11\n");
+}
+else if (regs->pc == 0xDB1E && hitGo)
+{
+	dumpDis = true;
+}
+else if (regs->pc == 0xA003 && hitGo)
+{
+	dumpDis = false;
+	WriteLog("*** BT2 CHECK FOR $B7s\n");
+}
+else if (regs->pc == 0xA063 && hitGo)
+{
+	dumpDis = true;
+}
+else if (regs->pc == 0xA0FE && hitGo)
+{
+	dumpDis = false;
+	WriteLog("*** BT2 CHECK FOR $D5 $AA $96 HEADER\n");
+}
+else if (regs->pc == 0xA112 && hitGo)
+{
+	dumpDis = true;
+	WriteLog("*** BT2 LOOK FOR HEADER FAILED\n");
+}
+else if (regs->pc == 0xA14B && hitGo)
+{
+	dumpDis = true;
+}
+else if (regs->pc == 0xA254 && hitGo)
+{
+	// This is where it hits a BRK and goes BOOM
+	dumpDis = false;
+	hitGo = false;
+}
+else if (regs->pc == 0xA155)
+{
+	WriteLog("*** $A2E2 is %02X...\n", regs->RdMem(0xA2E2));
+}
+else if (regs->pc == 0xA1C2)
+{
+	static char bcName[13][5] = { "JMP", "JMPA", "BNE", "LDI", "JSR", "LDA", "SUB", "STA", "RTS", "JMPA", "INC", "CRSH", "ILDA" };
+	static int bcLen[13] = { 2, 2, 2, 1, 2, 2, 1, 2, 0, 2, 2, 0, 2 };
+
+	uint16_t addr = RdMemWZP(0x52) + regs->y;
+	uint8_t bytecode = regs->RdMem(addr);
+	uint16_t bcAddr = ((regs->RdMem(addr + 2) ^ 0xD9) << 8) | (regs->RdMem(addr + 1) ^ 0x03);
+	uint8_t bcVal = regs->RdMem(addr + 1) ^ 0x4C;
+
+	WriteLog("\n*** bc %04X: %s ", addr, bcName[bytecode]);
+
+	if (bcLen[bytecode] == 1)
+		WriteLog("$%02X", bcVal);
+	else if (bcLen[bytecode] == 2)
+		WriteLog("$%04X", bcAddr);
+
+	WriteLog("\n\n");
+}
+#endif
+
+#if 0
+// Border Zone timing...
+static bool inDelay1 = false;
+static bool inDelay2 = false;
+static bool inRead1 = false;
+static bool hitGo = false;
+if (regs->pc == 0xF0B1)
+	WriteLog("*** $F09C ($6F,70) -> $%02X%02X\n", regs->RdMem(0x70), regs->RdMem(0x6F));
+
+if (regs->pc == 0xC8F2)
+	hitGo = true;
+
+// Delay is $D20D to $D21D...
+if (regs->pc == 0xD20D && hitGo && !inDelay1)
+{
+	dumpDis = false;
+	inDelay1 = true;
+	WriteLog("*** DELAY\n");
+}
+else if (regs->pc == 0xD21D && inDelay1)
+{
+	dumpDis = true;
+	inDelay1 = false;
+}
+
+// Next delay starts @ $D356 - $D36A
+else if (regs->pc == 0xD356 && hitGo && !inDelay2)
+{
+	dumpDis = false;
+	inDelay2 = true;
+	WriteLog("*** DELAY #2\n");
+}
+else if (regs->pc == 0xD36A && inDelay2)
+{
+	dumpDis = true;
+	inDelay2 = false;
+}
+else if (regs->pc == 0xD486 && hitGo && !inRead1)
+{
+	dumpDis = false;
+	inRead1 = true;
+	WriteLog("\n*** FAST READ ROUTINE (!!!)\n\n");
+}
+else if (regs->pc == 0xD4B1 && inRead1)
+{
+	dumpDis = true;
+	inRead1 = false;
+}
+#endif
+#if 0
+// 13-sector disk debugging
+// start with the slot ROM
+static bool inDelay = false;
+static bool inBell = false;
+static bool inReadSector = false;
+static bool inSlotROM = false;
+if (regs->pc == 0xFCA8)// && !inSlotROM)//!inBell && !inReadSector)
+{
+	dumpDis = false;
+	inDelay = true;
+	WriteLog("*** DELAY\n");
+}
+else if (regs->pc == 0xFCB3 && inDelay && inSlotROM)//&& !inBell && !inReadSector)
+{
+	dumpDis = true;
+	inDelay = false;
+}
+if (regs->pc == 0xFBD9)
+{
+	dumpDis = false;
+	inBell = true;
+	WriteLog("*** BELL1\n");
+}
+else if (regs->pc == 0xFBEF && inBell)
+{
+//	dumpDis = true;
+	inBell = false;
+}
+//else if (regs->pc == 0xC664)
+else if (regs->pc == 0xC663)
+{
+	dumpDis = true;
+	inSlotROM = true;
+	WriteLog("*** DISK @ $C600\n");
+}
+else if (regs->pc == 0x801)
+{
+	WriteLog("*** DISK @ $801\n");
+	dumpDis = true;
+}
+#endif
 // Hard disk debugging
 #if 0
 if (first && (regs->pc == 0x801))
@@ -2651,6 +2841,10 @@ btQueuePtr = (btQueuePtr + 1) % BACKTRACE_SIZE;
 #endif
 #endif
 #ifdef __DEBUG__
+static uint16_t spc, ppc = 0;
+static bool seenHi = false;
+static uint64_t oldClock = 0;
+spc = regs->pc;
 static char disbuf[80];
 if (dumpDis)
 {
@@ -2662,9 +2856,15 @@ if (dumpDis)
 
 #if 0
 if (opcode == 0)
+//if (regs->pc == 0xA255)
+//static bool seenBT = false;
+//if (hitGo && !seenBT)
+//if (dobacktrace)
 {
+//seenBT = true;
 	static char disbuf[80];
-	uint32_t btStart = btQueuePtr - 12 + (btQueuePtr < 12 ? BACKTRACE_SIZE : 0);
+//	uint32_t btStart = btQueuePtr - 12 + (btQueuePtr < 12 ? BACKTRACE_SIZE : 0);
+	uint32_t btStart = 0;
 
 	for(uint32_t i=btStart; i<btQueuePtr; i++)
 	{
@@ -2676,26 +2876,51 @@ if (opcode == 0)
 //if (!(regs->cpuFlags & V65C02_STATE_ILLEGAL_INST))
 //instCount[opcode]++;
 
+		if (regs->Timer)
+			regs->Timer(CPUCycles[opcode]);
+
+		uint64_t clockSave = regs->clock + CPUCycles[opcode];
+
 		// We need this because the opcode function could add 1 or 2 cycles
-		// which aren't accounted for in CPUCycles[].
-		uint64_t clockSave = regs->clock;
+		// to regs->clock which aren't accounted for in CPUCycles[].
+//		uint64_t clockSave = regs->clock;
 
 		// Execute that opcode...
 		exec_op[opcode]();
 		regs->clock += CPUCycles[opcode];
 
 		// Tell the timer function (if any) how many PHI2s have elapsed...
-		if (regs->Timer)
+//		if (regs->Timer)
+		if (regs->Timer && (regs->clock - clockSave) > 0)
 			regs->Timer(regs->clock - clockSave);
 
 #ifdef __DEBUG__
 if (dumpDis)
-	WriteLog(" [SP=01%02X, CC=%s%s.%s%s%s%s%s, A=%02X, X=%02X, Y=%02X](%d)\n",
+{
+	WriteLog(" [SP=01%02X, CC=%s%s.%s%s%s%s%s, A=%02X, X=%02X, Y=%02X](%d)[%02X]\n",//<%s>\n",
 		regs->sp,
 		(regs->cc & FLAG_N ? "N" : "-"), (regs->cc & FLAG_V ? "V" : "-"),
 		(regs->cc & FLAG_B ? "B" : "-"), (regs->cc & FLAG_D ? "D" : "-"),
 		(regs->cc & FLAG_I ? "I" : "-"), (regs->cc & FLAG_Z ? "Z" : "-"),
-		(regs->cc & FLAG_C ? "C" : "-"), regs->a, regs->x, regs->y, regs->clock - clockSave);
+		(regs->cc & FLAG_C ? "C" : "-"), regs->a, regs->x, regs->y, regs->clock - clockSave + CPUCycles[opcode], floppyDrive[0].dataRegister);//, sequence);
+	sequence[0] = 0;
+
+	if (((spc == 0xD4D1) || (spc == 0xD4E2)) && (floppyDrive[0].dataRegister & 0x80))
+		seenHi = true;
+
+	if ((spc == 0xD4CE) || (spc == 0xD4DF))
+	{
+		WriteLog(" (%d)\n", regs->clock - oldClock);
+
+		if ((regs->y & 0x80) == 0 && seenHi && ((ppc == 0xD4D1) || (ppc == 0xD4E2)))
+			WriteLog("\n***** MISS! *****\n\n");
+
+		seenHi = false;
+		oldClock = regs->clock;
+	}
+
+	ppc = spc;
+}
 #endif
 
 #ifdef __DEBUGMON__
@@ -2777,4 +3002,3 @@ WriteLog("Clock=$%X\n", regs->clock);
 	// to exit from it.
 	regs->overflow = regs->clock - endCycles;
 }
-

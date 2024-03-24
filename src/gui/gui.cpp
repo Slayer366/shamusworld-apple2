@@ -249,6 +249,7 @@ void GUI::MouseDown(int32_t x, int32_t y, uint32_t buttons)
 	case 1:
 		SpawnMessage("*** DISK #1 ***");
 
+#if 0
 		if (disk1EjectHovered && !floppyDrive[0].IsEmpty(0))
 		{
 			floppyDrive[0].EjectImage(0);
@@ -261,6 +262,32 @@ void GUI::MouseDown(int32_t x, int32_t y, uint32_t buttons)
 			Config::HideWindow();
 			DiskSelector::ShowWindow(0);
 		}
+#else
+		if (disk1EjectHovered)
+		{
+			if (!floppyDrive[0].IsEmpty(0))
+			{
+				floppyDrive[0].EjectImage(0);
+				SpawnMessage("*** DISK #1 EJECTED ***");
+			}
+		}
+		else
+		{
+			if (disk1NewDiskHovered)
+			{
+				if (!floppyDrive[0].IsEmpty(0))
+					floppyDrive[0].EjectImage(0);
+
+				floppyDrive[0].CreateBlankImage(0);
+			}
+			else
+			{
+				// Load the disk selector
+				Config::HideWindow();
+				DiskSelector::ShowWindow(0);
+			}
+		}
+#endif
 
 		break;
 	// Disk #2
@@ -574,7 +601,7 @@ void GUI::DrawString(SDL_Renderer * renderer, int x, int y, const char * s, bool
 
 
 //
-// N.B.: This draws a char at an abosulte X/Y position, not on a grid
+// N.B.: This draws a char at an absolute X/Y position, not on a grid
 //
 void GUI::DrawStringVert(SDL_Renderer * renderer, int x, int y, const char * s, bool invert/*= false*/)
 {

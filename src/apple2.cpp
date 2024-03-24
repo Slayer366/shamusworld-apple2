@@ -60,6 +60,7 @@
 #include "gui/diskselector.h"
 #include "gui/config.h"
 #include "gui/gui.h"
+#include "mouse.h"
 
 // Debug and misc. defines
 
@@ -134,6 +135,8 @@ static SDL_Thread * cpuThread = NULL;
 static SDL_cond * cpuCond = NULL;
 static SDL_sem * mainSem = NULL;
 static bool cpuFinished = false;
+
+static CustMouse custMouse;
 
 // NB: Apple //e Manual sez 6502 is running @ 1,022,727 Hz
 //     This is a lie. At the end of each 65 cycle line, there is an elongated
@@ -278,7 +281,6 @@ WriteLog("CPU: SDL_mutexV(cpuMutex);\n");
 }
 #endif
 
-
 //
 // Request a change in the power state of the emulated Apple
 //
@@ -286,7 +288,6 @@ void SetPowerState(void)
 {
 	powerStateChangeRequested = true;
 }
-
 
 //
 // Load a file into RAM/ROM image space
@@ -298,12 +299,11 @@ bool LoadImg(char * filename, uint8_t * ram, int size)
 	if (fp == NULL)
 		return false;
 
-	fread(ram, 1, size, fp);
+	if (fread(ram, 1, size, fp));
 	fclose(fp);
 
 	return true;
 }
-
 
 const uint8_t stateHeader[19] = "APPLE2SAVESTATE1.2";
 static void SaveApple2State(const char * filename)
@@ -358,7 +358,6 @@ static void SaveApple2State(const char * filename)
 	fclose(file);
 }
 
-
 static bool LoadApple2State(const char * filename)
 {
 	WriteLog("Main: Loading Apple2 state...\n");
@@ -371,7 +370,7 @@ static bool LoadApple2State(const char * filename)
 	}
 
 	uint8_t buffer[18];
-	fread(buffer, 1, 18, file);
+	if (fread(buffer, 1, 18, file));
 
 	// Sanity check...
 	if (memcmp(buffer, stateHeader, 18) != 0)
@@ -382,11 +381,11 @@ static bool LoadApple2State(const char * filename)
 	}
 
 	// Read CPU state
-	fread(&mainCPU, 1, sizeof(mainCPU), file);
+	if (fread(&mainCPU, 1, sizeof(mainCPU), file));
 
 	// Read main memory
-	fread(ram, 1, 0x10000, file);
-	fread(ram2, 1, 0x10000, file);
+	if (fread(ram, 1, 0x10000, file));
+	if (fread(ram2, 1, 0x10000, file));
 
 	// Read in state variables
 	keyDown = (bool)fgetc(file);
@@ -427,7 +426,6 @@ static bool LoadApple2State(const char * filename)
 	return true;
 }
 
-
 static void ResetApple2State(void)
 {
 	keyDown = false;
@@ -453,7 +451,6 @@ static void ResetApple2State(void)
 	mainCPU.cpuFlags |= V65C02_ASSERT_LINE_RESET;
 }
 
-
 static double cyclesForSample = 0;
 static void AppleTimer(uint16_t cycles)
 {
@@ -469,18 +466,17 @@ static void AppleTimer(uint16_t cycles)
 
 	if (cyclesForSample >= 21.26009)
 	{
-#if 0
-sampleClock = mainCPU.clock;
-WriteLog("    cyclesForSample = %lf (%d samples, cycles=%d)\n", cyclesForSample, sampleClock - lastSampleClock, cycles);
-sampleCount++;
-lastSampleClock = sampleClock;
-#endif
-		WriteSampleToBuffer();
-		cyclesForSample -= 21.26009;
+        #if 0
+        sampleClock = mainCPU.clock;
+        WriteLog("    cyclesForSample = %lf (%d samples, cycles=%d)\n", cyclesForSample, sampleClock - lastSampleClock, cycles);
+        sampleCount++;
+        lastSampleClock = sampleClock;
+        #endif
+		       WriteSampleToBuffer();
+		       cyclesForSample -= 21.26009;
 	}
 #endif
 }
-
 
 #ifdef CPU_CLOCK_CHECKING
 uint8_t counter = 0;
@@ -490,7 +486,7 @@ uint64_t lastClock = 0;
 //
 // Main loop
 //
-int main(int /*argc*/, char * /*argv*/[])
+int main(int argc, char *argv[])
 {
 	InitLog("./apple2.log");
 	LoadSettings();
@@ -620,10 +616,22 @@ So we need to decouple the CPU thread from the host video thread, and have the C
 //	SDL_sem * mainMutex = SDL_CreateMutex();
 #endif
 
+//Load Parameter disk image
+    if(argc == 2){
+        bool success = floppyDrive[0].LoadImage(argv[1]);
+        // if (!success) {std::cout<< "Could not load file  \n";}
+		// printf( "argc: %d\n", argc );
+		if (!success) {
+            printf( "Could not load file: %s \n", argv[1]);
+            return true;
+        }
+    }
+
 	WriteLog("Entering main loop...\n");
 
 	while (running)
 	{
+	custMouse.update(sdlRenderer);
 #ifdef CPU_CLOCK_CHECKING
 		double timeToNextEvent = GetTimeToNextEvent();
 #endif
@@ -666,8 +674,8 @@ WriteLog("Main: SDL_DestroyCond(cpuCond);\n");
 #if 0
 #include "dis65c02.h"
 static char disbuf[80];
-uint16_t pc=0x801;
-while (pc < 0x9FF)
+uint16_t pc=0xA000;
+while (pc < 0xA3FF)
 {
 	pc += Decode65C02(&mainCPU, disbuf, pc);
 	WriteLog("%s\n", disbuf);
@@ -681,7 +689,6 @@ while (pc < 0x9FF)
 
 	return 0;
 }
-
 
 //
 // Apple //e scancodes. Tables are normal (0), +CTRL (1), +SHIFT (2),
@@ -944,16 +951,16 @@ static void FrameCallback(void)
 				VAY_3_8910::maxVolume *= 1.4142135f;
 				SpawnMessage("MB Volume: %d", (int)VAY_3_8910::maxVolume);
 			}
-else if (event.key.keysym.sym == SDLK_F9)
-{
-	floppyDrive[0].CreateBlankImage(1);
-//	SpawnMessage("Image cleared...");
-}//*/
-/*else if (event.key.keysym.sym == SDLK_F10)
-{
-	floppyDrive[0].SwapImages();
-//	SpawnMessage("Image swapped...");
-}//*/
+			else if (event.key.keysym.sym == SDLK_F9)
+			{
+				floppyDrive[0].CreateBlankImage(1);
+				//	SpawnMessage("Image cleared...");
+			}//*/
+			/*else if (event.key.keysym.sym == SDLK_F10)
+			{
+				floppyDrive[0].SwapImages();
+			//	SpawnMessage("Image swapped...");
+			}//*/
 			// Toggle the disassembly process
 			else if (event.key.keysym.sym == SDLK_F11)
 			{
@@ -1017,10 +1024,12 @@ else if (event.key.keysym.sym == SDLK_F9)
 
 		case SDL_MOUSEMOTION:
 			GUI::MouseMove(event.motion.x, event.motion.y, event.motion.state);
+			mouseX = event.motion.x; // filling in variable to feed event.motion.x to custom mouse cursor in mouse.h
+			mouseY = event.motion.y; // filling in variable to feed event.motion.y to custom mouse cursor in mouse.h
 
 			// Handle mouse showing when the mouse is hidden...
 			if (hideMouseTimeout == -1)
-				SDL_ShowCursor(1);
+				SDL_ShowCursor(0);
 
 			hideMouseTimeout = 60;
 			break;
@@ -1090,6 +1099,7 @@ else if (event.key.keysym.sym == SDLK_F9)
 	// Render the Apple screen + GUI overlay
 	RenderAppleScreen(sdlRenderer);
 	GUI::Render(sdlRenderer);
+	custMouse.draw(sdlRenderer);
 	SDL_RenderPresent(sdlRenderer);
 	SetCallbackTime(FrameCallback, 16666.66666667);
 
@@ -1147,14 +1157,12 @@ if (counter == 60)
 #endif
 }
 
-
 static void BlinkTimer(void)
 {
 	// Set up blinking at 1/4 sec intervals
 	flash = !flash;
 	SetCallbackTime(BlinkTimer, 250000);
 }
-
 
 /*
 Next problem is this: How to have events occur and synchronize with the rest
@@ -1181,4 +1189,3 @@ while (!done)
 		time = 20;
 }
 */
-

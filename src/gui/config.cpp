@@ -362,7 +362,7 @@ void Config::MouseMove(int32_t x, int32_t y, uint32_t buttons)
 		case OTLineEdit:
 		{
 			LineEdit * le = (LineEdit *)obj;
-			uint32_t labelLen = strlen(le->label);
+			int32_t labelLen = strlen(le->label);
 			bool oldHover = le->hovered;
 			le->hovered = (((nx >= ((le->r.x + labelLen + 1) * FONT_WIDTH))
 				&& (nx <= ((le->r.x + labelLen + 1 + le->size) * FONT_WIDTH))

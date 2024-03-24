@@ -9,7 +9,7 @@
 // WHO  WHEN        WHAT
 // ---  ----------  -----------------------------------------------------------
 // JLH  09/27/2013  Created this file
-
+//
 
 #include "mmu.h"
 #include "apple2.h"
@@ -18,7 +18,6 @@
 #include "mockingboard.h"
 #include "sound.h"
 #include "video.h"
-
 
 // Debug defines
 //#define LC_DEBUG
@@ -82,7 +81,6 @@ uint8_t * lcBankMemoryW   = &ram[0xD000];	// $D000 - $DFFF (write)
 uint8_t * upperMemoryR    = &ram[0xE000];	// $E000 - $FFFF (read)
 uint8_t * upperMemoryW    = &ram[0xE000];	// $E000 - $FFFF (write)
 
-
 // Function prototypes
 uint8_t ReadNOP(uint16_t);
 void WriteNOP(uint16_t, uint8_t);
@@ -136,12 +134,12 @@ void SwitchHIRESW(uint16_t, uint8_t);
 uint8_t SwitchDHIRESR(uint16_t);
 void SwitchDHIRESW(uint16_t, uint8_t);
 void SwitchIOUDIS(uint16_t, uint8_t);
+uint8_t ReadCassetteIn(uint16_t);
 uint8_t ReadButton0(uint16_t);
 uint8_t ReadButton1(uint16_t);
 uint8_t ReadPaddle0(uint16_t);
 uint8_t ReadIOUDIS(uint16_t);
 uint8_t ReadDHIRES(uint16_t);
-
 
 // The main Apple //e memory map
 AddressMap memoryMap[] = {
@@ -190,6 +188,8 @@ AddressMap memoryMap[] = {
 	{ 0xC054, 0xC055, AM_READ_WRITE, 0, 0, SwitchPAGE2R, SwitchPAGE2W },
 	{ 0xC056, 0xC057, AM_READ_WRITE, 0, 0, SwitchHIRESR, SwitchHIRESW },
 	{ 0xC05E, 0xC05F, AM_READ_WRITE, 0, 0, SwitchDHIRESR, SwitchDHIRESW },
+	// $C060 is Cassette IN.  No idea what it reads with N/C
+	{ 0xC060, 0xC060, AM_READ, 0, 0, ReadCassetteIn, 0 },
 	{ 0xC061, 0xC061, AM_READ, 0, 0, ReadButton0, 0 },
 	{ 0xC062, 0xC062, AM_READ, 0, 0, ReadButton1, 0 },
 	{ 0xC064, 0xC067, AM_READ, 0, 0, ReadPaddle0, 0 },
@@ -229,7 +229,6 @@ $C400-$CFFF   slot         slot         internal     internal
 Read from $C800-$CFFF causes I/O STROBE to go low (and INTCXROM and INTC8ROM are not set)
 
 */
-
 
 void SetupAddressMap(void)
 {
@@ -318,7 +317,6 @@ void SetupAddressMap(void)
 	SwitchLC();
 }
 
-
 //
 // Reset the MMU state after a power down event
 //
@@ -328,17 +326,22 @@ void ResetMMUPointers(void)
 	{
 		mainMemoryTextR = (displayPage2 ? &ram2[0x0400] : &ram[0x0400]);
 		mainMemoryTextW = (displayPage2 ? &ram2[0x0400] : &ram[0x0400]);
+		mainMemoryHGRR = (displayPage2 ? &ram2[0x2000] : &ram[0x2000]);
+		mainMemoryHGRW = (displayPage2 ? &ram2[0x2000] : &ram[0x2000]);
 	}
 	else
 	{
-		mainMemoryTextR = (ramwrt ? &ram2[0x0400] : &ram[0x0400]);
+// Shouldn't mainMemoryTextR depend on ramrd???  (I think it should...)
+		mainMemoryTextR = (ramrd ? &ram2[0x0400] : &ram[0x0400]);
 		mainMemoryTextW = (ramwrt ? &ram2[0x0400] : &ram[0x0400]);
+		mainMemoryHGRR = (ramrd ? &ram2[0x2000] : &ram[0x2000]);
+		mainMemoryHGRW = (ramwrt ? &ram2[0x2000] : &ram[0x2000]);
 	}
 
 	mainMemoryR = (ramrd ? &ram2[0x0200] : &ram[0x0200]);
-	mainMemoryHGRR = (ramrd ? &ram2[0x2000] : &ram[0x2000]);
 	mainMemoryW = (ramwrt ?  &ram2[0x0200] : &ram[0x0200]);
-	mainMemoryHGRW = (ramwrt ? &ram2[0x2000] : &ram[0x2000]);
+//	mainMemoryHGRR = (ramrd ? &ram2[0x2000] : &ram[0x2000]);
+//	mainMemoryHGRW = (ramwrt ? &ram2[0x2000] : &ram[0x2000]);
 
 //	slot6Memory = (intCXROM ? &rom[0xC600] : &diskROM[0]);
 //	slot3Memory = (slotC3ROM ? &rom[0] : &rom[0xC300]);
@@ -352,7 +355,6 @@ WriteLog("SLOTC3ROM = %s\n", (slotC3ROM ? "ON" : "off"));
 WriteLog("ALTZP = %s\n", (altzp ? "ON" : "off"));
 #endif
 }
-
 
 //
 // Set up slot access
@@ -415,7 +417,6 @@ So maybe...
 */
 }
 
-
 //
 // Built-in functions
 //
@@ -430,11 +431,9 @@ uint8_t ReadNOP(uint16_t)
 	return 0xFF;
 }
 
-
 void WriteNOP(uint16_t, uint8_t)
 {
 }
-
 
 uint8_t ReadMemory(uint16_t address)
 {
@@ -443,7 +442,6 @@ uint8_t ReadMemory(uint16_t address)
 	// no need to do any checking here.
 	return (*addrPtrRead[address])[addrOffset[address]];
 }
-
 
 void WriteMemory(uint16_t address, uint8_t byte)
 {
@@ -455,7 +453,6 @@ void WriteMemory(uint16_t address, uint8_t byte)
 
 	(*addrPtrWrite[address])[addrOffset[address]] = byte;
 }
-
 
 //
 // The main memory access functions used by V65C02
@@ -490,7 +487,6 @@ if ((address > 0xC000 && address < 0xC100) || address == 0xC601)
 #endif
 }
 
-
 void AppleWriteMem(uint16_t address, uint8_t byte)
 {
 #if 0
@@ -523,7 +519,6 @@ if (address == 0x000D)
 	(*(funcMapWrite[address]))(address, byte);
 }
 
-
 //
 // Generic slot handlers.  These are set up here so that we can catch INTCXROM,
 // INTC8ROM & SLOTC3ROM here instead of having to catch them in each slot handler.
@@ -546,7 +541,6 @@ uint8_t SlotR(uint16_t address)
 	return (*(slotHandlerR[slot]))(address & 0xFF);
 }
 
-
 void SlotW(uint16_t address, uint8_t byte)
 {
 	if (intCXROM)
@@ -564,7 +558,6 @@ void SlotW(uint16_t address, uint8_t byte)
 	(*(slotHandlerW[slot]))(address & 0xFF, byte);
 }
 
-
 //
 // Slot handling for 2K address space at $C800-$CFFF
 //
@@ -576,7 +569,6 @@ uint8_t Slot2KR(uint16_t address)
 	return (*(slotHandler2KR[enabledSlot]))(address & 0x7FF);
 }
 
-
 void Slot2KW(uint16_t address, uint8_t byte)
 {
 	if (intCXROM || intC8ROM)
@@ -584,7 +576,6 @@ void Slot2KW(uint16_t address, uint8_t byte)
 
 	(*(slotHandler2KW[enabledSlot]))(address & 0x7FF, byte);
 }
-
 
 //
 // Actual emulated I/O functions follow
@@ -594,50 +585,53 @@ uint8_t ReadKeyboard(uint16_t /*addr*/)
 	return lastKeyPressed | ((uint8_t)keyDown << 7);
 }
 
-
 void Switch80STORE(uint16_t address, uint8_t)
 {
 	store80Mode = (bool)(address & 0x01);
 WriteLog("Setting 80STORE to %s...\n", (store80Mode ? "ON" : "off"));
 
+	// It seems this affects more than just the text RAM, it also seems to affect the graphics RAM as well...
 	if (store80Mode)
 	{
 		mainMemoryTextR = (displayPage2 ? &ram2[0x0400] : &ram[0x0400]);
 		mainMemoryTextW = (displayPage2 ? &ram2[0x0400] : &ram[0x0400]);
+		mainMemoryHGRR = (displayPage2 ? &ram2[0x2000] : &ram[0x2000]);
+		mainMemoryHGRW = (displayPage2 ? &ram2[0x2000] : &ram[0x2000]);
 	}
 	else
 	{
-		mainMemoryTextR = (ramwrt ? &ram2[0x0400] : &ram[0x0400]);
+		mainMemoryTextR = (ramrd ? &ram2[0x0400] : &ram[0x0400]);
 		mainMemoryTextW = (ramwrt ? &ram2[0x0400] : &ram[0x0400]);
+		mainMemoryHGRR = (ramrd ? &ram2[0x2000] : &ram[0x2000]);
+		mainMemoryHGRW = (ramwrt ? &ram2[0x2000] : &ram[0x2000]);
 	}
 }
-
 
 void SwitchRAMRD(uint16_t address, uint8_t)
 {
 	ramrd = (bool)(address & 0x01);
 	mainMemoryR = (ramrd ? &ram2[0x0200] : &ram[0x0200]);
-	mainMemoryHGRR = (ramrd ? &ram2[0x2000] : &ram[0x2000]);
+//	mainMemoryHGRR = (ramrd ? &ram2[0x2000] : &ram[0x2000]);
 
 	if (store80Mode)
 		return;
 
 	mainMemoryTextR = (ramrd ? &ram2[0x0400] : &ram[0x0400]);
+	mainMemoryHGRR = (ramrd ? &ram2[0x2000] : &ram[0x2000]);
 }
-
 
 void SwitchRAMWRT(uint16_t address, uint8_t)
 {
 	ramwrt = (bool)(address & 0x01);
 	mainMemoryW = (ramwrt ?  &ram2[0x0200] : &ram[0x0200]);
-	mainMemoryHGRW = (ramwrt ? &ram2[0x2000] : &ram[0x2000]);
+//	mainMemoryHGRW = (ramwrt ? &ram2[0x2000] : &ram[0x2000]);
 
 	if (store80Mode)
 		return;
 
 	mainMemoryTextW = (ramwrt ? &ram2[0x0400] : &ram[0x0400]);
+	mainMemoryHGRW = (ramwrt ? &ram2[0x2000] : &ram[0x2000]);
 }
-
 
 //
 // Since any slots that aren't populated are set to read from the ROM anyway,
@@ -674,7 +668,6 @@ WriteLog("Setting SLOTCXROM to %s...\n", (address & 0x01 ? "ON" : "off"));
 #endif
 }
 
-
 void SwitchALTZP(uint16_t address, uint8_t)
 {
 	altzp = (bool)(address & 0x01);
@@ -705,7 +698,6 @@ void SwitchSLOTC3ROM(uint16_t address, uint8_t)
 #endif
 }
 
-
 /*
 We need to see where this is being switched from; if we know that, we can switch in the appropriate ROM to $C800-$CFFF.  N.B.: Will probably need a custom handler routine, as some cards (like the Apple Hi-Speed SCSI card) split the 2K range into a 1K RAM space and a 1K bank switch ROM space.
 */
@@ -723,7 +715,6 @@ WriteLog("Hitting INTC8ROM (read)...\n");
 	return rom[0xCFFF];
 }
 
-
 //
 // This resets the INTC8ROM switch (RW)
 //
@@ -733,19 +724,16 @@ WriteLog("Hitting INTC8ROM (write)...\n");
 	intC8ROM = false;
 }
 
-
 void Switch80COL(uint16_t address, uint8_t)
 {
 	col80Mode = (bool)(address & 0x01);
 }
-
 
 void SwitchALTCHARSET(uint16_t address, uint8_t)
 {
 	alternateCharset = (bool)(address & 0x01);
 WriteLog("Setting ALTCHARSET to %s...\n", (alternateCharset ? "ON" : "off"));
 }
-
 
 uint8_t ReadKeyStrobe(uint16_t)
 {
@@ -756,12 +744,10 @@ uint8_t ReadKeyStrobe(uint16_t)
 	return byte;
 }
 
-
 uint8_t ReadBANK2(uint16_t)
 {
 	return (lcState < 0x04 ? 0x80 : 0x00);
 }
-
 
 uint8_t ReadLCRAM(uint16_t)
 {
@@ -770,118 +756,103 @@ uint8_t ReadLCRAM(uint16_t)
 	return (lcROM ? 0x00 : 0x80);
 }
 
-
 uint8_t ReadRAMRD(uint16_t)
 {
 	return (uint8_t)ramrd << 7;
 }
-
 
 uint8_t ReadRAMWRT(uint16_t)
 {
 	return (uint8_t)ramwrt << 7;
 }
 
-
 uint8_t ReadSLOTCXROM(uint16_t)
 {
 	return (uint8_t)intCXROM << 7;
 }
-
 
 uint8_t ReadALTZP(uint16_t)
 {
 	return (uint8_t)altzp << 7;
 }
 
-
 uint8_t ReadSLOTC3ROM(uint16_t)
 {
 	return (uint8_t)slotC3ROM << 7;
 }
-
 
 uint8_t Read80STORE(uint16_t)
 {
 	return (uint8_t)store80Mode << 7;
 }
 
-
 uint8_t ReadVBL(uint16_t)
 {
 	return (uint8_t)vbl << 7;
 }
-
 
 uint8_t ReadTEXT(uint16_t)
 {
 	return (uint8_t)textMode << 7;
 }
 
-
 uint8_t ReadMIXED(uint16_t)
 {
 	return (uint8_t)mixedMode << 7;
 }
-
 
 uint8_t ReadPAGE2(uint16_t)
 {
 	return (uint8_t)displayPage2 << 7;
 }
 
-
 uint8_t ReadHIRES(uint16_t)
 {
 	return (uint8_t)hiRes << 7;
 }
-
 
 uint8_t ReadALTCHARSET(uint16_t)
 {
 	return (uint8_t)alternateCharset << 7;
 }
 
-
 uint8_t Read80COL(uint16_t)
 {
 	return (uint8_t)col80Mode << 7;
 }
-
 
 void WriteKeyStrobe(uint16_t, uint8_t)
 {
 	keyDown = false;
 }
 
-
 uint8_t ReadSpeaker(uint16_t)
 {
 	ToggleSpeaker();
-	return 0;
+//	return 0;
+	// Seems this is needed for some things...
+	return ReadFloatingBus(0);
 }
-
 
 void WriteSpeaker(uint16_t, uint8_t)
 {
 	ToggleSpeaker();
 }
 
-
 uint8_t SwitchLCR(uint16_t address)
 {
 	lcState = address & 0x0B;
 	SwitchLC();
-	return 0;
+//	return 0;
+	// Seems this is needed for some things...
+	return ReadFloatingBus(0);
 }
-
 
 void SwitchLCW(uint16_t address, uint8_t)
 {
 	lcState = address & 0x0B;
 	SwitchLC();
 }
-
 
 void SwitchLC(void)
 {
@@ -958,14 +929,14 @@ WriteLog("SwitchLC: Read/write bank 2\n");
 	}
 }
 
-
 uint8_t SwitchTEXTR(uint16_t address)
 {
 WriteLog("Setting TEXT to %s...\n", (address & 0x01 ? "ON" : "off"));
 	textMode = (bool)(address & 0x01);
-	return 0;
+//	return 0;
+	// Seems this is needed for some things...
+	return ReadFloatingBus(0);
 }
-
 
 void SwitchTEXTW(uint16_t address, uint8_t)
 {
@@ -973,14 +944,14 @@ WriteLog("Setting TEXT to %s...\n", (address & 0x01 ? "ON" : "off"));
 	textMode = (bool)(address & 0x01);
 }
 
-
 uint8_t SwitchMIXEDR(uint16_t address)
 {
 WriteLog("Setting MIXED to %s...\n", (address & 0x01 ? "ON" : "off"));
 	mixedMode = (bool)(address & 0x01);
-	return 0;
+//	return 0;
+	// Seems this is needed for some things...
+	return ReadFloatingBus(0);
 }
-
 
 void SwitchMIXEDW(uint16_t address, uint8_t)
 {
@@ -988,7 +959,9 @@ WriteLog("Setting MIXED to %s...\n", (address & 0x01 ? "ON" : "off"));
 	mixedMode = (bool)(address & 0x01);
 }
 
-
+/*
+80STORE, PAGE2, and HIRES bank switch the primary display pages, $400--$7FF and $2000--$3FFF, between motherboard RAM and auxiliary card RAM.  If 80STORE is set and HIRES is reset, then PAGE2 switches between motherboard RAM and auxiliary card RAM for reading and writing in the $400--$7FF range.  If 80STORE is set and HIRES is set, then PAGE2 switches between motherboard RAM and auxiliary card RAM for reading and writing in the $400--$7FF and $2000--$3FFF ranges.  PAGE2 set selects auxiliary card RAM, and PAGE2 reset selects motherboard RAM.  If 80STORE is reset, then RAMRD and RAMWRT will bank switch the $400-$7FF and $2000--$3FFF ranges along with the rest of the $200--$BFFF range.
+*/
 uint8_t SwitchPAGE2R(uint16_t address)
 {
 WriteLog("Setting PAGE2 to %s...\n", (address & 0x01 ? "ON" : "off"));
@@ -998,11 +971,17 @@ WriteLog("Setting PAGE2 to %s...\n", (address & 0x01 ? "ON" : "off"));
 	{
 		mainMemoryTextR = (displayPage2 ? &ram2[0x0400] : &ram[0x0400]);
 		mainMemoryTextW = (displayPage2 ? &ram2[0x0400] : &ram[0x0400]);
+
+		if (hiRes)
+		{
+			mainMemoryHGRR = (displayPage2 ? &ram2[0x2000] : &ram[0x2000]);
+			mainMemoryHGRW = (displayPage2 ? &ram2[0x2000] : &ram[0x2000]);
+		}
 	}
 
-	return 0;
+	// Seems this is needed for some things...
+	return ReadFloatingBus(0);
 }
-
 
 void SwitchPAGE2W(uint16_t address, uint8_t)
 {
@@ -1013,24 +992,29 @@ WriteLog("Setting PAGE2 to %s...\n", (address & 0x01 ? "ON" : "off"));
 	{
 		mainMemoryTextR = (displayPage2 ? &ram2[0x0400] : &ram[0x0400]);
 		mainMemoryTextW = (displayPage2 ? &ram2[0x0400] : &ram[0x0400]);
+
+		if (hiRes)
+		{
+			mainMemoryHGRR = (displayPage2 ? &ram2[0x2000] : &ram[0x2000]);
+			mainMemoryHGRW = (displayPage2 ? &ram2[0x2000] : &ram[0x2000]);
+		}
 	}
 }
-
 
 uint8_t SwitchHIRESR(uint16_t address)
 {
 WriteLog("Setting HIRES to %s...\n", (address & 0x01 ? "ON" : "off"));
 	hiRes = (bool)(address & 0x01);
-	return 0;
+//	return 0;
+	// Seems this is needed for some things...
+	return ReadFloatingBus(0);
 }
-
 
 void SwitchHIRESW(uint16_t address, uint8_t)
 {
 WriteLog("Setting HIRES to %s...\n", (address & 0x01 ? "ON" : "off"));
 	hiRes = (bool)(address & 0x01);
 }
-
 
 uint8_t SwitchDHIRESR(uint16_t address)
 {
@@ -1039,9 +1023,10 @@ WriteLog("Setting DHIRES to %s (ioudis = %s)...\n", ((address & 0x01) ^ 0x01 ? "
 	if (ioudis)
 		dhires = !((bool)(address & 0x01));
 
-	return 0;
+//	return 0;
+	// Seems this is needed for some things...
+	return ReadFloatingBus(0);
 }
-
 
 void SwitchDHIRESW(uint16_t address, uint8_t)
 {
@@ -1050,24 +1035,28 @@ WriteLog("Setting DHIRES to %s (ioudis = %s)...\n", ((address & 0x01) ^ 0x01 ? "
 		dhires = !((bool)(address & 0x01));
 }
 
-
 void SwitchIOUDIS(uint16_t address, uint8_t)
 {
 	ioudis = !((bool)(address & 0x01));
 }
 
+uint8_t ReadCassetteIn(uint16_t)
+{
+	// No idea what it's supposed to return if there's no cassette attached, so let's try this (Serpentine crashes if $FF is returned...)
+	// Serpentine crashes even earlier if $00 is returned...  Now what???
+	// This seems to work for Serpentine, not sure what's supposed to be returned here...  Maybe it's an RNG when N/C?
+	return 0x5A;
+}
 
 uint8_t ReadButton0(uint16_t)
 {
 	return (uint8_t)openAppleDown << 7;
 }
 
-
 uint8_t ReadButton1(uint16_t)
 {
 	return (uint8_t)closedAppleDown << 7;
 }
-
 
 // The way the paddles work is that a strobe is written (or read) to $C070,
 // then software counts down the time that it takes for the paddle outputs
@@ -1079,18 +1068,15 @@ uint8_t ReadPaddle0(uint16_t)
 	return 0xFF;
 }
 
-
 uint8_t ReadIOUDIS(uint16_t)
 {
 	return (uint8_t)ioudis << 7;
 }
 
-
 uint8_t ReadDHIRES(uint16_t)
 {
 	return (uint8_t)dhires << 7;
 }
-
 
 // Whenever a read is done to a MMIO location that is unconnected to anything,
 // it actually sees the RAM access done by the video generation hardware. Some
@@ -1131,7 +1117,6 @@ uint8_t ReadFloatingBus(uint16_t)
 			| (!store80Mode && displayPage2 ? 0x4000 : 0)
 			| ((vcount & 0x07) << 10);
 
-	// The address so read is *always* in main RAM, not alt RAM
+	// The address so read is *always* in main RAM, never alt RAM
 	return ram[address];
 }
-

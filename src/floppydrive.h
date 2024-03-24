@@ -76,7 +76,9 @@ class FloppyDrive
 		uint8_t motorOn;
 		uint8_t activeDrive;
 		uint8_t ioMode;
+	public: // temp, for testing...  :-P
 		uint8_t dataRegister;
+	private:
 		uint8_t phase[2];
 		uint8_t headPos[2];
 		bool ioHappened;
@@ -85,19 +87,22 @@ class FloppyDrive
 		uint32_t currentPos[2];
 
 		uint8_t cpuDataBus;
-		uint8_t slSwitch;			// Shift/Load soft switch
-		uint8_t rwSwitch;			// Read/Write soft switch
-		uint8_t readPulse;			// Disk read head "pulse" signal
-		uint8_t pulseClock;			// Disk read head bitstream "pulse clock"
+		uint8_t slSwitch;		// Shift/Load soft switch
+		uint8_t rwSwitch;		// Read/Write soft switch
+		uint8_t readPulse;		// Disk read head "pulse" signal
+		uint8_t pulseClock;		// Disk read head bitstream "pulse clock"
 		uint8_t sequencerState;
 		uint32_t driveOffTimeout;
 		uint8_t zeroBitCount;
 		uint16_t trackLength[2];
+//		uint8_t pulseTiming;	// WOZ disk "optimal" pulse timing (in 0.25µs)
+		uint8_t window;
 };
 
 // Exported functions/variables
 void InstallFloppy(uint8_t slot);
 extern FloppyDrive floppyDrive[];
+extern char sequence[];
 
 #endif	// __FLOPPY_H__
 

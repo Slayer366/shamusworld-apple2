@@ -83,8 +83,8 @@ GCC_DEPS   = -MMD
 #		-ffast-math `sdl2-config --cflags` -pg -g
 #		-fomit-frame-pointer `sdl2-config --cflags` -g
 #		-fomit-frame-pointer `sdl2-config --cflags` -DLOG_UNMAPPED_MEMORY_ACCESSES
-CFLAGS   = $(GCC_DEPS) -Wall -Wno-switch $(DEFINES) -ffast-math $(SDL_CFLAGS) -pg -g
-CPPFLAGS = $(GCC_DEPS) -Wall -Wno-switch -Wno-non-virtual-dtor $(DEFINES) \
+CFLAGS   = $(GCC_DEPS) -O2 -Wall -Wno-switch $(DEFINES) -ffast-math $(SDL_CFLAGS) -pg -g
+CPPFLAGS = $(GCC_DEPS) -O2 -Wall -Wno-switch -Wno-non-virtual-dtor $(DEFINES) \
 		-ffast-math $(SDL_CFLAGS) -pg -g
 
 LDFLAGS = $(EXTRA)

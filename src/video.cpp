@@ -337,8 +337,7 @@ static void RenderLoRes(uint16_t toLine = 24);
 static void RenderDLoRes(uint16_t toLine = 24);
 static void RenderHiRes(uint16_t toLine = 192);
 static void RenderDHiRes(uint16_t toLine = 192);
-static void RenderVideoFrame(/*uint32_t *, int*/);
-
+static void RenderVideoFrame();
 
 void SetupBlurTable(void)
 {
@@ -346,7 +345,8 @@ void SetupBlurTable(void)
 	//       last four bits are copies of the previous four...
 	//       Odd. Doing the bit patterns from 0-$7F doesn't work, but going
 	//       from 0-$7FF stepping by 16 does. Hm.
-	//       Well, it seems that going from 0-$7F doesn't have enough precision to do the job.
+	//       Well, it seems that going from 0-$7F doesn't have enough precision
+	//       to do the job.
 	for(uint16_t bitPat=0; bitPat<0x800; bitPat+=0x10)
 	{
 		uint16_t w0 = bitPat & 0x111, w1 = bitPat & 0x222, w2 = bitPat & 0x444, w3 = bitPat & 0x888;
@@ -379,7 +379,6 @@ void SetupBlurTable(void)
 	}
 }
 
-
 void TogglePalette(void)
 {
 	if (palette == (uint32_t *)colors)
@@ -404,7 +403,6 @@ void TogglePalette(void)
 	}
 }
 
-
 void CycleScreenTypes(void)
 {
 	char scrTypeStr[3][40] = { "Color TV", "White monochrome", "Green monochrome" };
@@ -417,12 +415,10 @@ void CycleScreenTypes(void)
 	SpawnMessage("%s", scrTypeStr[screenType]);
 }
 
-
 void ToggleTickDisplay(void)
 {
 	showFrameTicks = !showFrameTicks;
 }
-
 
 static uint32_t msgTicks = 0;
 static char message[4096];
@@ -436,9 +432,7 @@ void SpawnMessage(const char * text, ...)
 	va_end(arg);
 
 	msgTicks = 120;
-//WriteLog("\n%s\n", message);
 }
-
 
 static void DrawString2(uint32_t x, uint32_t y, uint32_t color, char * msg);
 static void DrawString(void)
@@ -452,7 +446,6 @@ static void DrawString(void)
 	DrawString2(8, 8, 0x0020FF20, message);
 }
 
-
 static void DrawString(uint32_t x, uint32_t y, uint32_t color, char * msg)
 {
 //This approach works, and seems to be fast enough... Though it probably would
@@ -463,7 +456,6 @@ static void DrawString(uint32_t x, uint32_t y, uint32_t color, char * msg)
 
 	DrawString2(x, y, color, msg);
 }
-
 
 static void DrawString2(uint32_t x, uint32_t y, uint32_t color, char * msg)
 {
@@ -509,7 +501,6 @@ static void DrawString2(uint32_t x, uint32_t y, uint32_t color, char * msg)
 		address += FONT_WIDTH;
 	}
 }
-
 
 static void DrawFrameTicks(void)
 {
@@ -559,9 +550,7 @@ static void DrawFrameTicks(void)
 
 	if ((frameTimePtr % 15) == 0)
 	{
-//		uint32_t prevClock = (frameTimePtr + 1) % 60;
 		uint64_t prevClock = (frameTimePtr + 1) % 60;
-//		float fps = 59.0f / (((float)frameTime[frameTimePtr] - (float)frameTime[prevClock]) / 1000.0f);
 		double fps = 59.0 / ((double)(frameTime[frameTimePtr] - frameTime[prevClock]) / (double)SDL_GetPerformanceFrequency());
 		sprintf(msg, "%.1lf FPS", fps);
 	}
@@ -569,14 +558,13 @@ static void DrawFrameTicks(void)
 	DrawString(20, 24, color, msg);
 }
 
-
 static void Render40ColumnTextLine(uint8_t line)
 {
 	uint32_t pixelOn = (screenType == ST_GREEN_MONO ? 0xFF61FF61 : 0xFFFFFFFF);
 
 	for(int x=0; x<40; x++)
 	{
-		uint8_t chr = ram[lineAddrLoRes[line] + (displayPage2 ? 0x0400 : 0x0000) + x];
+		uint8_t chr = ram[lineAddrLoRes[line] + (!store80Mode && displayPage2 ? 0x0400 : 0x0000) + x];
 
 		// Render character at (x, y)
 
@@ -623,7 +611,6 @@ static void Render40ColumnTextLine(uint8_t line)
 		}
 	}
 }
-
 
 static void Render80ColumnTextLine(uint8_t line)
 {
@@ -680,20 +667,17 @@ static void Render80ColumnTextLine(uint8_t line)
 	}
 }
 
-
 static void Render40ColumnText(void)
 {
 	for(uint8_t line=0; line<24; line++)
 		Render40ColumnTextLine(line);
 }
 
-
 static void Render80ColumnText(void)
 {
 	for(uint8_t line=0; line<24; line++)
 		Render80ColumnTextLine(line);
 }
-
 
 static void RenderLoRes(uint16_t toLine/*= 24*/)
 {
@@ -734,8 +718,8 @@ fb fb fb -> 15 [1111] -> 15		WHITE
 
 		for(uint16_t x=0; x<40; x+=2)
 		{
-			uint8_t scrByte1 = ram[lineAddrLoRes[y] + (displayPage2 ? 0x0400 : 0x0000) + x + 0] & 0x0F;
-			uint8_t scrByte2 = ram[lineAddrLoRes[y] + (displayPage2 ? 0x0400 : 0x0000) + x + 1] & 0x0F;
+			uint8_t scrByte1 = ram[lineAddrLoRes[y] + (!store80Mode && displayPage2 ? 0x0400 : 0x0000) + x + 0] & 0x0F;
+			uint8_t scrByte2 = ram[lineAddrLoRes[y] + (!store80Mode && displayPage2 ? 0x0400 : 0x0000) + x + 1] & 0x0F;
 			scrByte1 = mirrorNybble[scrByte1];
 			scrByte2 = mirrorNybble[scrByte2];
 			// This is just a guess, but it'll have to do for now...
@@ -761,7 +745,6 @@ fb fb fb -> 15 [1111] -> 15		WHITE
 						for(uint32_t cy=0; cy<8; cy++)
 						{
 							scrBuffer[((x * 14) + (i * 4) + j) + (((y * 16) + cy) * VIRTUAL_SCREEN_WIDTH)] = palette[color];
-//							scrBuffer[((x * 14) + (i * 4) + j) + (((y * 16) + cy) * VIRTUAL_SCREEN_WIDTH)] = palette[color];
 						}
 					}
 				}
@@ -775,7 +758,6 @@ fb fb fb -> 15 [1111] -> 15		WHITE
 					for(uint32_t cy=0; cy<8; cy++)
 					{
 						scrBuffer[((x * 14) + j) + (((y * 16) + cy) * VIRTUAL_SCREEN_WIDTH)] = (pixels & 0x08000000 ? pixelOn : 0xFF000000);
-//						scrBuffer[((x * 14) + j) + (((y * 16) + cy) * VIRTUAL_SCREEN_WIDTH)] = (pixels & 0x08000000 ? pixelOn : 0xFF000000);
 					}
 
 					pixels <<= 1;
@@ -789,8 +771,8 @@ fb fb fb -> 15 [1111] -> 15		WHITE
 
 		for(uint16_t x=0; x<40; x+=2)
 		{
-			uint8_t scrByte1 = ram[lineAddrLoRes[y] + (displayPage2 ? 0x0400 : 0x0000) + x + 0] >> 4;
-			uint8_t scrByte2 = ram[lineAddrLoRes[y] + (displayPage2 ? 0x0400 : 0x0000) + x + 1] >> 4;
+			uint8_t scrByte1 = ram[lineAddrLoRes[y] + (!store80Mode && displayPage2 ? 0x0400 : 0x0000) + x + 0] >> 4;
+			uint8_t scrByte2 = ram[lineAddrLoRes[y] + (!store80Mode && displayPage2 ? 0x0400 : 0x0000) + x + 1] >> 4;
 			scrByte1 = mirrorNybble[scrByte1];
 			scrByte2 = mirrorNybble[scrByte2];
 			// This is just a guess, but it'll have to do for now...
@@ -816,7 +798,6 @@ fb fb fb -> 15 [1111] -> 15		WHITE
 						for(uint32_t cy=8; cy<16; cy++)
 						{
 							scrBuffer[((x * 14) + (i * 4) + j) + (((y * 16) + cy) * VIRTUAL_SCREEN_WIDTH)] = palette[color];
-//							scrBuffer[((x * 14) + (i * 4) + j) + (((y * 16) + cy) * VIRTUAL_SCREEN_WIDTH)] = palette[color];
 						}
 					}
 				}
@@ -830,7 +811,6 @@ fb fb fb -> 15 [1111] -> 15		WHITE
 					for(uint32_t cy=8; cy<16; cy++)
 					{
 						scrBuffer[((x * 14) + j) + (((y * 16) + cy) * VIRTUAL_SCREEN_WIDTH)] = (pixels & 0x08000000 ? pixelOn : 0xFF000000);
-//						scrBuffer[((x * 14) + j) + (((y * 16) + cy) * VIRTUAL_SCREEN_WIDTH)] = (pixels & 0x08000000 ? pixelOn : 0xFF000000);
 					}
 
 					pixels <<= 1;
@@ -839,7 +819,6 @@ fb fb fb -> 15 [1111] -> 15		WHITE
 		}
 	}
 }
-
 
 //
 // Render the Double Lo Res screen (HIRES off, DHIRES on)
@@ -1003,7 +982,6 @@ FB FB FB -> 15 [1111] -> 15		WHITE
 	}
 }
 
-
 static void RenderHiRes(uint16_t toLine/*= 192*/)
 {
 #if 0
@@ -1023,11 +1001,11 @@ static void RenderHiRes(uint16_t toLine/*= 192*/)
 
 		for(uint16_t x=0; x<40; x+=2)
 		{
-			uint8_t screenByte = ram[lineAddrHiRes[y] + (displayPage2 ? 0x2000 : 0x0000) + x];
+			uint8_t screenByte = ram[lineAddrHiRes[y] + (!store80Mode && displayPage2 ? 0x2000 : 0x0000) + x];
 			uint32_t pixels = appleHiresToMono[previousLoPixel | screenByte];
 			previousLoPixel = (screenByte << 2) & 0x0100;
 
-			screenByte = ram[lineAddrHiRes[y] + (displayPage2 ? 0x2000 : 0x0000) + x + 1];
+			screenByte = ram[lineAddrHiRes[y] + (!store80Mode && displayPage2 ? 0x2000 : 0x0000) + x + 1];
 			uint32_t pixels2 = appleHiresToMono[previousLoPixel | screenByte];
 			previousLoPixel = (screenByte << 2) & 0x0100;
 
@@ -1077,7 +1055,6 @@ static void RenderHiRes(uint16_t toLine/*= 192*/)
 	}
 }
 
-
 static void RenderDHiRes(uint16_t toLine/*= 192*/)
 {
 // Now it is. Now roll this fix into all the other places... !!! FIX !!!
@@ -1092,14 +1069,18 @@ static void RenderDHiRes(uint16_t toLine/*= 192*/)
 
 		for(uint16_t x=0; x<40; x+=2)
 		{
-			uint8_t screenByte = ram[lineAddrHiRes[y] + (displayPage2 ? 0x2000 : 0x0000) + x];
+			uint8_t screenByte = ram[lineAddrHiRes[y] + (!store80Mode && displayPage2 ? 0x2000 : 0x0000) + x];
 			uint32_t pixels = (mirrorTable[screenByte & 0x7F]) << 14;
-			screenByte = ram[lineAddrHiRes[y] + (displayPage2 ? 0x2000 : 0x0000) + x + 1];
+
+			screenByte = ram[lineAddrHiRes[y] + (!store80Mode && displayPage2 ? 0x2000 : 0x0000) + x + 1];
 			pixels = pixels | (mirrorTable[screenByte & 0x7F]);
-			screenByte = ram2[lineAddrHiRes[y] + (displayPage2 ? 0x2000 : 0x0000) + x];
+
+			screenByte = ram2[lineAddrHiRes[y] + (!store80Mode && displayPage2 ? 0x2000 : 0x0000) + x];
 			pixels = pixels | ((mirrorTable[screenByte & 0x7F]) << 21);
-			screenByte = ram2[lineAddrHiRes[y] + (displayPage2 ? 0x2000 : 0x0000) + x + 1];
+
+			screenByte = ram2[lineAddrHiRes[y] + (!store80Mode && displayPage2 ? 0x2000 : 0x0000) + x + 1];
 			pixels = pixels | ((mirrorTable[screenByte & 0x7F]) << 7);
+
 			pixels = previous4bits | (pixels >> 1);
 
 			// We now have 28 pixels (expanded from 14) in word: mask is $0F FF FF FF
@@ -1139,7 +1120,6 @@ static void RenderDHiRes(uint16_t toLine/*= 192*/)
 		}
 	}
 }
-
 
 void RenderVideoFrame(void)
 {
@@ -1204,7 +1184,6 @@ void RenderVideoFrame(void)
 		DrawFrameTicks();
 }
 
-
 //
 // Prime SDL and create surfaces
 //
@@ -1258,7 +1237,6 @@ bool InitVideo(void)
 	return true;
 }
 
-
 //
 // Free various SDL components
 //
@@ -1272,7 +1250,6 @@ void VideoDone(void)
 	WriteLog("Video: Done.\n");
 }
 
-
 //
 // Render the Apple video screen to the primary texture
 //
@@ -1284,7 +1261,6 @@ void RenderAppleScreen(SDL_Renderer * renderer)
 	SDL_RenderClear(renderer);		// Without this, full screen has trash on the sides
 	SDL_RenderCopy(renderer, sdlTexture, NULL, NULL);
 }
-
 
 //
 // Fullscreen <-> window switching
@@ -1298,4 +1274,3 @@ void ToggleFullScreen(void)
 	if (retVal != 0)
 		WriteLog("Video::ToggleFullScreen: SDL error = %s\n", SDL_GetError());
 }
-

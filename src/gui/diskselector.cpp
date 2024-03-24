@@ -210,7 +210,7 @@ void DiskSelector::FindDisks(const char * path)
 				&& (strcmp(ent->d_name, ".") != 0))
 			{
 				// Check to see if this is a special directory with a manifest
-				char buf2[0x10000];
+				char buf2[0x10000 + 13];
 				sprintf(buf2, "%s/manifest.txt", buf);
 				FILE * fp = fopen(buf2, "r");
 
