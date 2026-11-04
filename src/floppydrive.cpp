@@ -885,7 +885,8 @@ WriteLog("FLOPPY: Current pos pre: %u, ", currentPos[activeDrive]);
 WriteLog("post: %u; newBitLen/old = %.1f/%.1f\n", currentPos[activeDrive], newBitLen, oldBitLen);
 
 		trackLength[activeDrive] = (uint16_t)newBitLen;
-		SpawnMessage("Stepping to track %u...", headPos[activeDrive] >> 2);
+//		SpawnMessage("Stepping to track %u...", headPos[activeDrive] >> 2);
+		SpawnMessage("Loading...");
 	}
 
 // only check the time since the phase was first set ON
@@ -954,8 +955,9 @@ uint8_t FloppyDrive::DataRegister(void)
 		uint8_t tIdx = woz.tmap[headPos[activeDrive]];
 		uint32_t bitLen = (tIdx == 0xFF ? 51200
 			: Uint16LE(woz.track[tIdx].bitCount));
-		SpawnMessage("%u:Reading $%02X from track %u, sector %u...",
-			activeDrive, dataRegister, headPos[activeDrive] >> 2, (uint32_t)(((float)currentPos[activeDrive] / (float)bitLen) * 16.0f));
+//		SpawnMessage("%u:Reading $%02X from track %u, sector %u...",
+//			activeDrive, dataRegister, headPos[activeDrive] >> 2, (uint32_t)(((float)currentPos[activeDrive] / (float)bitLen) * 16.0f));
+		SpawnMessage("Loading...");
 		ioMode = IO_MODE_READ;
 		ioHappened = true;
 
