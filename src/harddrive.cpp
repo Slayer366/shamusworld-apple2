@@ -62,6 +62,105 @@ static uint8_t * buf;
 static uint32_t bufPtr;
 static uint8_t response;
 
+static uint32_t hdSize = 0;
+static uint32_t hdDataOffset = 0;
+static FILE * hdFile = NULL;
+static bool hdWritable = false;
+
+
+static uint32_t ReadLE32(const uint8_t *p)
+{
+	return (uint32_t)p[0] | ((uint32_t)p[1] << 8)
+		| ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+
+static bool LoadHardDriveImage(const char *filename)
+{
+	if (hdFile) {
+		fclose(hdFile);
+		hdFile = NULL;
+	}
+	hdWritable = false;
+	free(hdData);
+	hdData = NULL;
+	hdSize = hdDataOffset = 0;
+
+	FILE *fp = fopen(filename, "rb+");
+	if (fp) {
+		hdWritable = true;
+	} else {
+		fp = fopen(filename, "rb");
+	}
+	if (!fp) {
+		return false;
+	}
+	if (fseek(fp, 0, SEEK_END) != 0) {
+		fclose(fp); return false;
+	}
+
+	long fileLength = ftell(fp);
+
+	if (fileLength < 0 || fseek(fp, 0, SEEK_SET) != 0) {
+		fclose(fp);
+		return false;
+	}
+
+	uint32_t offset = 0;
+	uint32_t length = (uint32_t)fileLength;
+	uint8_t header[64];
+	if (fileLength >= 64 && fread(header, 1, sizeof(header), fp) == sizeof(header)
+		&& memcmp(header, "2IMG", 4) == 0)
+	{
+		uint32_t headerSize = (uint32_t)header[8] | ((uint32_t)header[9] << 8);
+		uint32_t dataOffset = ReadLE32(header + 24);
+		uint32_t dataLength = ReadLE32(header + 28);
+		if (headerSize < 64 || dataOffset < headerSize || dataOffset > (uint32_t)fileLength
+			|| dataLength > (uint32_t)fileLength - dataOffset || dataLength == 0
+			|| (dataLength % 512) != 0)
+		{
+			fclose(fp);
+			return false;
+		}
+		offset = dataOffset;
+		length = dataLength;
+	}
+	else if ((length % 512) != 0 || length == 0)
+	{
+		fclose(fp);
+		return false;
+	}
+
+	uint8_t *data = (uint8_t *)malloc(length);
+	if (!data || fseek(fp, offset, SEEK_SET) != 0 || fread(data, 1, length, fp) != length)
+	{
+		free(data);
+		fclose(fp);
+		return false;
+	}
+	hdData = data;
+	hdSize = length;
+	hdDataOffset = offset;
+	hdFile = fp;
+	return true;
+}
+
+
+static bool PrepareRead(uint32_t lba, uint32_t blocks)
+{
+	if (!hdData || blocks == 0 || lba > hdSize / 512
+		|| blocks > (hdSize / 512) - lba)
+	{
+		buf = NULL;
+		response = 0x02;
+		return false;
+	}
+	buf = hdData + (size_t)lba * 512;
+	bufPtr = 0;
+	bytesToSend = blocks * 512;
+	return true;
+}
+
 
 static inline void SetNextState(uint8_t state)
 {
@@ -80,7 +179,8 @@ static void RunDevice(void)
 		dumpDis = true;//*/
 
 	// These are SCSI messages sent in response to certain commands
-	static uint8_t readCapacity[8] = { 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 };
+//	static uint8_t readCapacity[8] = { 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 };
+	static uint8_t readCapacity[8] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 };
 	static uint8_t inquireData[30] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 'S', 'E', 'A', 'G', 'A', 'T', 'E', ' ', '3', '1', '3', '3', '7', ' ' };
 	static uint8_t badSense[20] = { 0x70, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
@@ -134,7 +234,17 @@ static void RunDevice(void)
 			else if (DRQ && DACK)
 			{
 				if (buf)
+				{
 					buf[bufPtr] = reg[0];
+					if (hdWritable && hdFile && buf >= hdData && buf < hdData + hdSize)
+					{
+						long filePos = (long)(hdDataOffset + (uint32_t)(buf - hdData) + bufPtr);
+						if (fseek(hdFile, filePos, SEEK_SET) != 0 || fputc(reg[0], hdFile) == EOF)
+						{
+							response = 0x02;
+						}
+					}
+				}
 
 				DRQ = DACK = false;
 				bytesToSend--;
@@ -142,6 +252,9 @@ static void RunDevice(void)
 
 				if (bytesToSend == 0)
 				{
+					if (hdWritable && hdFile) {
+						fflush(hdFile);
+					}
 					REQ = false;
 					SetNextState(DVM_STATUS);
 					buf = NULL;
@@ -219,11 +332,17 @@ static void RunDevice(void)
 			else if (cmd[0] == 0x08)
 			{
 				WriteLog("HD: Received command READ(6) [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
-				SetNextState(DVM_DATA_IN);
-				bytesToSend = cmd[4] * 512; // amount is set in blocks
+//				SetNextState(DVM_DATA_IN);
+//				bytesToSend = cmd[4] * 512; // amount is set in blocks
+				uint32_t blocks = cmd[4] ? cmd[4] : 256;
 				uint32_t lba = ((cmd[1] & 0x1F) << 16) | (cmd[2] << 8) | cmd[3];
-				buf = (hdData != NULL ? &hdData[lba * 512] : NULL);
-				bufPtr = 0;
+//				buf = (hdData != NULL ? &hdData[lba * 512] : NULL);
+//				bufPtr = 0;
+				if (PrepareRead(lba, blocks)) {
+					SetNextState(DVM_DATA_IN);
+				} else {
+					SetNextState(DVM_STATUS);
+				}
 			}
 			// Handle "Inquire" command
 			else if (cmd[0] == 0x12)
@@ -265,34 +384,69 @@ static void RunDevice(void)
 			// Handle "Read Capacity" command
 			if (cmd[0] == 0x25)
 			{
-				WriteLog("HD: Received command READ CAPACITY [%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6], cmd[7], cmd[8], cmd[9]);
-				SetNextState(DVM_DATA_IN);
-				bytesToSend = 8;//it's always 8...//cmd[4];
+//				WriteLog("HD: Received command READ CAPACITY [%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6], cmd[7], cmd[8], cmd[9]);
+//				SetNextState(DVM_DATA_IN);
+//				bytesToSend = 8;//it's always 8...//cmd[4];
 				// N.B.: We need to hook this up to the actual emulated HD size...
-				buf = readCapacity;
-				bufPtr = 0;
+//				buf = readCapacity;
+//				bufPtr = 0;
+				if (!hdData || hdSize < 512)
+				{
+					response = 0x02;
+					SetNextState(DVM_STATUS);
+				}
+				else
+				{
+					uint32_t lastLBA = hdSize / 512 - 1;
+					readCapacity[0] = (uint8_t)(lastLBA >> 24);
+					readCapacity[1] = (uint8_t)(lastLBA >> 16);
+					readCapacity[2] = (uint8_t)(lastLBA >> 8);
+					readCapacity[3] = (uint8_t)lastLBA;
+					SetNextState(DVM_DATA_IN);
+					bytesToSend = 8;
+					buf = readCapacity;
+					bufPtr = 0;
+				}
 			}
 			// Handle "Read" (10) command
 			else if (cmd[0] == 0x28)
 			{
 				WriteLog("HD: Received command READ(10) [%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6], cmd[7], cmd[8], cmd[9]);
 				// Drive next phase
-				SetNextState(DVM_DATA_IN);
-				bytesToSend = ((cmd[7] << 8) | cmd[8]) * 512; // amount is set in blocks
-				uint32_t lba = (cmd[2] << 24) | (cmd[3] << 16) | (cmd[4] << 8) | cmd[5];
-				buf = (hdData != NULL ? &hdData[lba * 512] : NULL);
-				bufPtr = 0;
+//				SetNextState(DVM_DATA_IN);
+//				bytesToSend = ((cmd[7] << 8) | cmd[8]) * 512; // amount is set in blocks
+//				uint32_t lba = (cmd[2] << 24) | (cmd[3] << 16) | (cmd[4] << 8) | cmd[5];
+//				buf = (hdData != NULL ? &hdData[lba * 512] : NULL);
+//				bufPtr = 0;
+				uint32_t blocks = ((uint32_t)cmd[7] << 8) | cmd[8];
+				uint32_t lba = ((uint32_t)cmd[2] << 24) | ((uint32_t)cmd[3] << 16) | ((uint32_t)cmd[4] << 8) | cmd[5];
+				if (PrepareRead(lba, blocks)) SetNextState(DVM_DATA_IN);
+				else SetNextState(DVM_STATUS);
 			}
 			// Handle "Write" (10) command
 			else if (cmd[0] == 0x2A)
 			{
 				WriteLog("HD: Received command WRITE(10) [%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6], cmd[7], cmd[8], cmd[9]);
 				// Drive next phase
-				SetNextState(DVM_DATA_OUT);
-				bytesToSend = ((cmd[7] << 8) | cmd[8]) * 512; // amount is set in blocks
-				uint32_t lba = (cmd[2] << 24) | (cmd[3] << 16) | (cmd[4] << 8) | cmd[5];
-				buf = (hdData != NULL ? &hdData[lba * 512] : NULL);
-				bufPtr = 0;
+//				SetNextState(DVM_DATA_OUT);
+//				bytesToSend = ((cmd[7] << 8) | cmd[8]) * 512; // amount is set in blocks
+//				uint32_t lba = (cmd[2] << 24) | (cmd[3] << 16) | (cmd[4] << 8) | cmd[5];
+//				buf = (hdData != NULL ? &hdData[lba * 512] : NULL);
+//				bufPtr = 0;
+				uint32_t blocks = ((uint32_t)cmd[7] << 8) | cmd[8];
+				uint32_t lba = ((uint32_t)cmd[2] << 24) | ((uint32_t)cmd[3] << 16) | ((uint32_t)cmd[4] << 8) | cmd[5];
+				if (!hdData || !hdWritable || !hdFile || !blocks || lba > hdSize / 512 || blocks > (hdSize / 512) - lba)
+				{
+					response = 0x02;
+					SetNextState(DVM_STATUS);
+				}
+				else
+				{
+					SetNextState(DVM_DATA_OUT);
+					bytesToSend = blocks * 512;
+					buf = hdData + (size_t)lba * 512;
+					bufPtr = 0;
+				}
 			}
 			else
 			{
@@ -618,34 +772,47 @@ void InstallHardDrive(uint8_t slot)
 {
 	SlotData hd = { SlotIOR, SlotIOW, SlotROM, 0, SlotIOExtraR, SlotIOExtraW };
 	InstallSlotHandler(slot, &hd);
-	char fnBuf[(MAX_PATH * 2) + 1];
+//	char fnBuf[(MAX_PATH * 2) + 1];
 
 	// If this fails to read the file, the pointer is set to NULL
-	uint32_t size = 0, skip = (uint32_t)-1;
+//	uint32_t size = 0, skip = (uint32_t)-1;
 	// sprintf(fnBuf, "%s%s", settings.disksPath, settings.hd[0]);
 
 	// Check to see which type of HD image we have...
-	char * ext = strrchr(settings.hd[0], '.');
+//	char * ext = strrchr(settings.hd[0], '.');
 
-	if (ext != NULL)
+//	if (ext != NULL)
+	if (settings.hd[0][0] == 0)
 	{
-		if (strcasecmp(ext, ".2mg") == 0)
-			skip = 0x40;
-		else if (strcasecmp(ext, ".hdv") == 0)
-			skip = 0;
-	}
-
-	if (skip == (uint32_t)-1)
-	{
-		hdData = NULL;
-		WriteLog("HD: Unknown HD image file: %s\n", settings.hd[0]);
+//		if (strcasecmp(ext, ".2mg") == 0)
+//			skip = 0x40;
+//		else if (strcasecmp(ext, ".hdv") == 0)
+//			skip = 0;
+		WriteLog("HD: No hard drive image configured.\n");
 		return;
 	}
 
-	hdData = ReadFile(fnBuf, &size, skip);
-
-	if (hdData)
-		WriteLog("HD: Read Hard Drive image file '%s', %u bytes ($%X)\n", settings.hd[0], size, size);
+//	if (skip == (uint32_t)-1)
+	char filename[(MAX_PATH * 2) + 2];
+	if (strchr(settings.hd[0], '/') || strchr(settings.hd[0], '\\')
+		|| (settings.hd[0][0] && settings.hd[0][1] == ':'))
+		snprintf(filename, sizeof(filename), "%s", settings.hd[0]);
 	else
-		WriteLog("HD: Could not read Hard Drive image file!\n");
+		snprintf(filename, sizeof(filename), "%s%s", settings.disksPath, settings.hd[0]);
+
+	if (!LoadHardDriveImage(filename))
+	{
+//		hdData = NULL;
+//		WriteLog("HD: Unknown HD image file: %s\n", settings.hd[0]);
+		WriteLog("HD: Could not load hard drive image '%s'.\n", filename);
+		return;
+	}
+
+//	hdData = ReadFile(fnBuf, &size, skip);
+
+//	if (hdData)
+//		WriteLog("HD: Read Hard Drive image file '%s', %u bytes ($%X)\n", settings.hd[0], size, size);
+//	else
+//		WriteLog("HD: Could not read Hard Drive image file!\n");
+	WriteLog("HD: Loaded '%s', %u bytes (%u blocks).\n", filename, hdSize, hdSize / 512);
 }
