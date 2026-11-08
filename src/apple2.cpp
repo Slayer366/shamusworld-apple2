@@ -162,8 +162,8 @@ int CPUThreadFunc(void * data)
 
 	do
 	{
-uint64_t cpuFrameTickStart = SDL_GetPerformanceCounter();
-uint64_t oldClock = mainCPU.clock;
+//uint64_t cpuFrameTickStart = SDL_GetPerformanceCounter();
+//uint64_t oldClock = mainCPU.clock;
 sampleCount = 0;
 sampleClock = lastSampleClock = mainCPU.clock;
 // decrement mainSem...
