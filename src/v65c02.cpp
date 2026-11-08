@@ -2876,8 +2876,9 @@ if (opcode == 0)
 //if (!(regs->cpuFlags & V65C02_STATE_ILLEGAL_INST))
 //instCount[opcode]++;
 
-		if (regs->Timer)
+		if (regs->Timer) {
 			regs->Timer(CPUCycles[opcode]);
+		}
 
 		uint64_t clockSave = regs->clock + CPUCycles[opcode];
 
@@ -2890,9 +2891,9 @@ if (opcode == 0)
 		regs->clock += CPUCycles[opcode];
 
 		// Tell the timer function (if any) how many PHI2s have elapsed...
-//		if (regs->Timer)
-		if (regs->Timer && (regs->clock - clockSave) > 0)
+		if (regs->Timer && (regs->clock - clockSave) > 0) {
 			regs->Timer(regs->clock - clockSave);
+		}
 
 #ifdef __DEBUG__
 if (dumpDis)

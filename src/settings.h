@@ -40,7 +40,7 @@ struct Settings
 	char BIOSPath[MAX_PATH + 1];
 	char disksPath[MAX_PATH + 1];
 	char autoStatePath[MAX_PATH + 1];
-	char hd[7][MAX_PATH + 1];
+	char hd[2][MAX_PATH + 1];
 
 	// Card slots
 	uint8_t cardSlot[5];		// 0-1 = Disk ][, 2-3 = Mockingboard, 4 = AHSSCSI

@@ -22,6 +22,7 @@
 #include "mmu.h"
 #include "settings.h"
 #include "v65c02.h"		// For dumpDis...
+#include <vector>
 
 
 static uint8_t romBank = 0;
@@ -30,9 +31,6 @@ static uint8_t deviceID = 7;
 static bool dmaSwitch = false;
 static uint8_t staticRAM[0x2000] = { 0 };
 static uint8_t reg[16];
-
-// Stuff that will have to GTFO of here
-static uint8_t * hdData = NULL;
 
 enum {
 	DVM_DATA_OUT = 0, DVM_DATA_IN = 1, DVM_COMMAND = 2, DVM_STATUS = 3,
@@ -61,7 +59,24 @@ static uint32_t bytesToSend;
 static uint8_t * buf;
 static uint32_t bufPtr;
 static uint8_t response;
+static uint8_t senseKey = 0;
+static uint8_t senseASC = 0;
+static uint8_t senseASCQ = 0;
 
+
+static void SetCheckCondition(uint8_t key, uint8_t asc, uint8_t ascq = 0)
+{
+	response = 0x02;
+	senseKey = key;
+	senseASC = asc;
+	senseASCQ = ascq;
+}
+
+
+// Keep static storage for SCSI data phase buffers instead of caching the whole disk
+static uint8_t scsiSectorBuf[512 * 256]; // Maximum 256 blocks per single SCSI transfer command
+static uint32_t activeLBA = 0;
+static bool activeWrite = false;
 static uint32_t hdSize = 0;
 static uint32_t hdDataOffset = 0;
 static FILE * hdFile = NULL;
@@ -75,6 +90,12 @@ static uint32_t ReadLE32(const uint8_t *p)
 }
 
 
+static uint16_t ReadLE16(const uint8_t *p)
+{
+	return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
+}
+
+
 static bool LoadHardDriveImage(const char *filename)
 {
 	if (hdFile) {
@@ -82,13 +103,12 @@ static bool LoadHardDriveImage(const char *filename)
 		hdFile = NULL;
 	}
 	hdWritable = false;
-	free(hdData);
-	hdData = NULL;
 	hdSize = hdDataOffset = 0;
+	bool canWrite = false;
 
 	FILE *fp = fopen(filename, "rb+");
 	if (fp) {
-		hdWritable = true;
+		canWrite = true;
 	} else {
 		fp = fopen(filename, "rb");
 	}
@@ -96,67 +116,108 @@ static bool LoadHardDriveImage(const char *filename)
 		return false;
 	}
 	if (fseek(fp, 0, SEEK_END) != 0) {
-		fclose(fp); return false;
+		fclose(fp);
+		return false;
 	}
 
 	long fileLength = ftell(fp);
 
-	if (fileLength < 0 || fseek(fp, 0, SEEK_SET) != 0) {
+	if (fileLength <= 0 || (unsigned long)fileLength > 0xFFFFFFFFul || fseek(fp, 0, SEEK_SET) != 0) {
 		fclose(fp);
 		return false;
 	}
 
 	uint32_t offset = 0;
 	uint32_t length = (uint32_t)fileLength;
+	bool imageReadOnly = false;
 	uint8_t header[64];
-	if (fileLength >= 64 && fread(header, 1, sizeof(header), fp) == sizeof(header)
-		&& memcmp(header, "2IMG", 4) == 0)
-	{
-		uint32_t headerSize = (uint32_t)header[8] | ((uint32_t)header[9] << 8);
-		uint32_t dataOffset = ReadLE32(header + 24);
-		uint32_t dataLength = ReadLE32(header + 28);
-		if (headerSize < 64 || dataOffset < headerSize || dataOffset > (uint32_t)fileLength
-			|| dataLength > (uint32_t)fileLength - dataOffset || dataLength == 0
-			|| (dataLength % 512) != 0)
-		{
+
+	size_t headerBytes = fread(header, 1, sizeof(header), fp);
+	if (headerBytes >= 4 && memcmp(header, "2IMG", 4) == 0) {
+		if (headerBytes < sizeof(header)) {
 			fclose(fp);
 			return false;
 		}
-		offset = dataOffset;
-		length = dataLength;
-	}
-	else if ((length % 512) != 0 || length == 0)
-	{
-		fclose(fp);
-		return false;
+
+		uint32_t headerSize = ReadLE16(header + 8);
+		uint32_t imageFormat = ReadLE32(header + 12);
+		uint32_t flags = ReadLE32(header + 16);
+		uint32_t blockCount = ReadLE32(header + 20);
+		offset = ReadLE32(header + 24);
+		length = ReadLE32(header + 28);
+
+		if (imageFormat != 1 || headerSize < 64 || headerSize > (uint32_t)fileLength) {
+			fclose(fp);
+			return false;
+		}
+
+		if (offset == 0) {
+			offset = headerSize;
+		}
+		if (length == 0 && blockCount != 0 && blockCount <= 0xFFFFFFFFu / 512u) {
+			length = blockCount * 512u;
+		}
+		if (offset < headerSize || offset > (uint32_t)fileLength || length == 0 ||
+			length > (uint32_t)fileLength - offset || (length % 512) != 0 ||
+			(blockCount != 0 && blockCount > 0xFFFFFFFFu / 512u) ||
+			(blockCount != 0 && blockCount * 512u != length)) {
+			fclose(fp);
+			return false;
+		}
+
+		imageReadOnly = (flags & 0x80000000u) != 0;
+	} else {
+		if ((length % 512) != 0 || length == 0) {
+			fclose(fp);
+			return false;
+		}
 	}
 
-	uint8_t *data = (uint8_t *)malloc(length);
-	if (!data || fseek(fp, offset, SEEK_SET) != 0 || fread(data, 1, length, fp) != length)
-	{
-		free(data);
-		fclose(fp);
-		return false;
-	}
-	hdData = data;
 	hdSize = length;
 	hdDataOffset = offset;
+	hdWritable = canWrite && !imageReadOnly;
 	hdFile = fp;
+
+	WriteLog("HD: Image data offset $%X, length $%X, %u blocks%s.\n",
+		hdDataOffset, hdSize, hdSize / 512,
+		imageReadOnly ? " (2MG write-protected)" : (hdWritable ? "" : " (host read-only)"));
 	return true;
 }
 
 
 static bool PrepareRead(uint32_t lba, uint32_t blocks)
 {
-	if (!hdData || blocks == 0 || lba > hdSize / 512
-		|| blocks > (hdSize / 512) - lba)
-	{
-		buf = NULL;
-		response = 0x02;
+	buf = NULL;
+	bufPtr = 0;
+	bytesToSend = 0;
+
+	if (!hdFile) {
+		SetCheckCondition(0x02, 0x3A); // NOT READY: medium not present
 		return false;
 	}
-	buf = hdData + (size_t)lba * 512;
-	bufPtr = 0;
+
+	if (lba > hdSize / 512 || blocks > (hdSize / 512) - lba) {
+		SetCheckCondition(0x05, 0x21); // ILLEGAL REQUEST: LBA out of range
+		return false;
+	}
+
+	if (blocks > 256) {
+		SetCheckCondition(0x05, 0x24); // ILLEGAL REQUEST: invalid field in CDB
+		return false;
+	}
+
+	if (blocks == 0) {
+		return true;
+	}
+
+	uint64_t filePos = (uint64_t)hdDataOffset + ((uint64_t)lba * 512);
+	if (filePos > 0x7FFFFFFF || fseek(hdFile, (long)filePos, SEEK_SET) != 0 ||
+			fread(scsiSectorBuf, 1, blocks * 512, hdFile) != blocks * 512) {
+				SetCheckCondition(0x03, 0x11); // MEDIUM ERROR: unrecovered read error
+				return false;
+	}
+
+	buf = scsiSectorBuf;
 	bytesToSend = blocks * 512;
 	return true;
 }
@@ -174,20 +235,32 @@ static inline void SetNextState(uint8_t state)
 
 static void RunDevice(void)
 {
-	// Let's see where it's really going...
-/*	if (mainCPU.pc == 0xCE7E)
-		dumpDis = true;//*/
-
 	// These are SCSI messages sent in response to certain commands
-//	static uint8_t readCapacity[8] = { 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 };
 	static uint8_t readCapacity[8] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 };
-	static uint8_t inquireData[30] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 'S', 'E', 'A', 'G', 'A', 'T', 'E', ' ', '3', '1', '3', '3', '7', ' ' };
-	static uint8_t badSense[20] = { 0x70, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
+	// Standard 36-byte SCSI INQUIRY data. Keep the historical vendor/model
+	// identity while supplying the fields and padding expected by SCSI-2.
+	static uint8_t inquireData[36] = { 0x00, 0x00, 0x02, 0x02, 31, 0x00, 0x00, 0x00, 'S', 'E', 'A', 'G', 'A', 'T', 'E', ' ', '3', '1', '3', '3', '7', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '0', '0', '0', '1' };
+
+	// MODE SENSE(6), error-recovery page (page 1), with no block descriptor.
+	static uint8_t modeSenseData[16] = { 0x0F, 0x00, 0x00, 0x00, 0x01, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+	static uint8_t senseData[18] = { 0x70, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
 	if (RST)
 	{
 		devMode = DVM_BUS_FREE;
 		DEV_BSY = false;
+		// A bus reset aborts any command and any outstanding DMA handshake.
+		// Do not leave a stale request/data phase active after the reset.
+		REQ = false;
+		DRQ = false;
+		DACK = false;
+		buf = NULL;
+		bufPtr = 0;
+		bytesToSend = 0;
+		activeWrite = false;
+		cmdLength = 0;
+		response = 0x00;
 		return;
 	}
 
@@ -209,6 +282,12 @@ static void RunDevice(void)
 
 			// Preset response code to "Good"
 			response = 0x00;
+			activeWrite = false;
+			buf = NULL;
+			bufPtr = 0;
+			bytesToSend = 0;
+			DRQ = DACK = false;
+			REQ = false;
 
 			if (ATN)
 				SetNextState(DVM_MESSAGE_OUT);
@@ -222,6 +301,13 @@ static void RunDevice(void)
 
 	case DVM_DATA_OUT:
 //WriteLog("   >>> DATA OUT PHASE (bts=%u)\n", bytesToSend);
+		if (bytesToSend == 0)
+		{
+			REQ = false;
+			SetNextState(DVM_STATUS);
+			buf = NULL;
+			break;
+		}
 		if (!ACK)
 			REQ = true;
 
@@ -236,14 +322,6 @@ static void RunDevice(void)
 				if (buf)
 				{
 					buf[bufPtr] = reg[0];
-					if (hdWritable && hdFile && buf >= hdData && buf < hdData + hdSize)
-					{
-						long filePos = (long)(hdDataOffset + (uint32_t)(buf - hdData) + bufPtr);
-						if (fseek(hdFile, filePos, SEEK_SET) != 0 || fputc(reg[0], hdFile) == EOF)
-						{
-							response = 0x02;
-						}
-					}
 				}
 
 				DRQ = DACK = false;
@@ -252,9 +330,22 @@ static void RunDevice(void)
 
 				if (bytesToSend == 0)
 				{
-					if (hdWritable && hdFile) {
-						fflush(hdFile);
+					// Flush block payload structure entirely cleanly at the end of the transaction frame
+					if (activeWrite && hdWritable && hdFile)
+					{
+						uint64_t filePos = (uint64_t)hdDataOffset + ((uint64_t)activeLBA *512);
+						if (filePos <= 0x7FFFFFFF && fseek(hdFile, (long)filePos, SEEK_SET) == 0)
+						{
+							if (fwrite(scsiSectorBuf, 1, bufPtr, hdFile) != bufPtr) {
+								SetCheckCondition(0x03, 0x0C); // MEDIUM ERROR: write error
+							}
+							fflush(hdFile);
+						} else {
+							SetCheckCondition(0x03, 0x0C);
+						}
 					}
+					activeWrite = false;
+					WriteLog("HD: DATA OUT complete (%u bytes).\n", bufPtr);
 					REQ = false;
 					SetNextState(DVM_STATUS);
 					buf = NULL;
@@ -266,6 +357,13 @@ static void RunDevice(void)
 
 	case DVM_DATA_IN:
 //WriteLog("   >>> DATA IN PHASE (bts=%u)\n", bytesToSend);
+		if (bytesToSend == 0)
+		{
+			REQ = false;
+			SetNextState(DVM_STATUS);
+			buf = NULL;
+			break;
+		}
 		if (!ACK)
 			REQ = true;
 
@@ -285,6 +383,7 @@ static void RunDevice(void)
 
 				if (bytesToSend == 0)
 				{
+					WriteLog("HD: DATA IN complete (%u bytes).\n", bufPtr);
 					REQ = false;
 					SetNextState(DVM_STATUS);
 					buf = NULL;
@@ -312,35 +411,45 @@ static void RunDevice(void)
 			if (cmd[0] == 0)
 			{
 				WriteLog("HD: Received command TEST UNIT READY\n");
+				if ((cmd[1] & 0xE0) != 0) {
+					SetCheckCondition(0x05, 0x25); // Logical unit not supported
+				} else if (!hdFile) {
+					SetCheckCondition(0x02, 0x3A); // Medium not present
+				}
 				SetNextState(DVM_STATUS);
 			}
 			// Handle "Request Sense" command
 			else if (cmd[0] == 0x03)
 			{
 				WriteLog("HD: Received command REQUEST SENSE [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
-				SetNextState(DVM_DATA_IN);
-				bytesToSend = cmd[4];
-
-				// Return error for LUNs other than 0
-				if ((cmd[1] & 0xE0) != 0)
-				{
-					buf = badSense;
-					bufPtr = 0;
-				}
+				memset(senseData, 0, sizeof(senseData));
+				senseData[0] = 0x70; // Current errors, fixed format
+				senseData[2] = senseKey;
+				senseData[7] = 10;
+				senseData[12] = senseASC;
+				senseData[13] = senseASCQ;
+				buf = senseData;
+				bufPtr = 0;
+				bytesToSend = cmd[4] < sizeof(senseData) ? cmd[4] : sizeof(senseData);
+				response = 0x00; // REQUEST SENSE reports the saved condition as data
+				SetNextState(bytesToSend ? DVM_DATA_IN : DVM_STATUS);
+				// Sense data is cleared after it has been copied into the response.
+				senseKey = senseASC = senseASCQ = 0;
 			}
 			// Handle "Read" (6) command
 			else if (cmd[0] == 0x08)
 			{
 				WriteLog("HD: Received command READ(6) [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
-//				SetNextState(DVM_DATA_IN);
-//				bytesToSend = cmd[4] * 512; // amount is set in blocks
 				uint32_t blocks = cmd[4] ? cmd[4] : 256;
 				uint32_t lba = ((cmd[1] & 0x1F) << 16) | (cmd[2] << 8) | cmd[3];
-//				buf = (hdData != NULL ? &hdData[lba * 512] : NULL);
-//				bufPtr = 0;
-				if (PrepareRead(lba, blocks)) {
-					SetNextState(DVM_DATA_IN);
+				if ((cmd[1] & 0xE0) != 0) {
+					SetCheckCondition(0x05, 0x25); // Logical unit not supported
+					SetNextState(DVM_STATUS);
+				} else if (PrepareRead(lba, blocks)) {
+					WriteLog("HD: READ(6) LBA %u, %u blocks (%u bytes).\n", lba, blocks, bytesToSend);
+					SetNextState(blocks ? DVM_DATA_IN : DVM_STATUS);
 				} else {
+					WriteLog("HD: READ(6) rejected: LBA %u, %u blocks.\n", lba, blocks);
 					SetNextState(DVM_STATUS);
 				}
 			}
@@ -348,35 +457,62 @@ static void RunDevice(void)
 			else if (cmd[0] == 0x12)
 			{
 				WriteLog("HD: Received command INQUIRE [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
-				SetNextState(DVM_DATA_IN);
-				bytesToSend = cmd[4];
 				buf = inquireData;
 				bufPtr = 0;
+				bytesToSend = cmd[4] < sizeof(inquireData) ? cmd[4] : sizeof(inquireData);
 
-				// Reject all but LUN 0
-				if ((cmd[1] & 0xE0) != 0)
-					response = 0x02; // "Check Condition" code
+				// Preserve the existing unsupported-LUN behavior, but report
+				// a sense code that REQUEST SENSE can explain to the firmware.
+				if ((cmd[1] & 0xE0) != 0) {
+					SetCheckCondition(0x05, 0x25); // Logical unit not supported
+				}
+				SetNextState(bytesToSend ? DVM_DATA_IN : DVM_STATUS);
 			}
 			// Handle "Mode Select" command
 			else if (cmd[0] == 0x15)
 			{
 				WriteLog("HD: Received command MODE SELECT [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
-				SetNextState(DVM_DATA_OUT);
+				activeWrite = false;
+				buf = NULL;
+				bufPtr = 0;
 				bytesToSend = cmd[4];
+
+				if (bytesToSend) {
+					SetNextState(DVM_DATA_OUT);
+				} else {
+					SetNextState(DVM_STATUS);
+				}
 			}
 			// Handle "Mode Sense" command
 			else if (cmd[0] == 0x1A)
 			{
 				WriteLog("HD: Received command MODE SENSE [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
-				SetNextState(DVM_DATA_IN);
-				bytesToSend = cmd[4];
+				if ((cmd[1] & 0xE0) != 0) {
+					SetCheckCondition(0x05, 0x25);
+					SetNextState(DVM_STATUS);
+				} else {
+					uint8_t pageCode = cmd[2] & 0x3F;
+					modeSenseData[0] = 0x0F;
+					modeSenseData[2] = hdWritable ? 0x00 : 0x80; // WP bit
+					if (pageCode == 0x01 || pageCode == 0x3F) {
+						buf = modeSenseData;
+						bufPtr = 0;
+						bytesToSend = cmd[4] < sizeof(modeSenseData) ? cmd[4] : sizeof(modeSenseData);
+					} else {
+						buf = modeSenseData;
+						bufPtr = 0;
+						bytesToSend = cmd[4] < 4 ? cmd[4] : 4;
+						modeSenseData[0] = 0x03; // Header only: no requested page
+					}
+					SetNextState(bytesToSend ? DVM_DATA_IN : DVM_STATUS);
+				}
 			}
 			else
 			{
 				WriteLog("HD: Received unhandled 6 command [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
 				// Return failure...
+				SetCheckCondition(0x05, 0x20); // ILLEGAL REQUEST: invalid command
 				SetNextState(DVM_STATUS);
-				response = 0x02; // Check condition code
 			}
 		}
 		else if (((cmdType == 1) || (cmdType == 2)) && (cmdLength == 10))
@@ -385,14 +521,18 @@ static void RunDevice(void)
 			if (cmd[0] == 0x25)
 			{
 //				WriteLog("HD: Received command READ CAPACITY [%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6], cmd[7], cmd[8], cmd[9]);
-//				SetNextState(DVM_DATA_IN);
 //				bytesToSend = 8;//it's always 8...//cmd[4];
 				// N.B.: We need to hook this up to the actual emulated HD size...
 //				buf = readCapacity;
 //				bufPtr = 0;
-				if (!hdData || hdSize < 512)
+				if ((cmd[1] & 0xE0) != 0)
 				{
-					response = 0x02;
+					SetCheckCondition(0x05, 0x25); // Logical unit not supported
+					SetNextState(DVM_STATUS);
+				}
+				else if (!hdFile || hdSize < 512)
+				{
+					SetCheckCondition(0x02, 0x3A); // Medium not present
 					SetNextState(DVM_STATUS);
 				}
 				else
@@ -413,55 +553,85 @@ static void RunDevice(void)
 			{
 				WriteLog("HD: Received command READ(10) [%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6], cmd[7], cmd[8], cmd[9]);
 				// Drive next phase
-//				SetNextState(DVM_DATA_IN);
-//				bytesToSend = ((cmd[7] << 8) | cmd[8]) * 512; // amount is set in blocks
-//				uint32_t lba = (cmd[2] << 24) | (cmd[3] << 16) | (cmd[4] << 8) | cmd[5];
-//				buf = (hdData != NULL ? &hdData[lba * 512] : NULL);
-//				bufPtr = 0;
 				uint32_t blocks = ((uint32_t)cmd[7] << 8) | cmd[8];
 				uint32_t lba = ((uint32_t)cmd[2] << 24) | ((uint32_t)cmd[3] << 16) | ((uint32_t)cmd[4] << 8) | cmd[5];
-				if (PrepareRead(lba, blocks)) SetNextState(DVM_DATA_IN);
-				else SetNextState(DVM_STATUS);
+				if ((cmd[1] & 0xE0) != 0) {
+					SetCheckCondition(0x05, 0x25);
+					SetNextState(DVM_STATUS);
+				} else if (PrepareRead(lba, blocks)) {
+					WriteLog("HD: READ(10) LBA %u, %u blocks (%u bytes).\n", lba, blocks, bytesToSend);
+					SetNextState(blocks ? DVM_DATA_IN : DVM_STATUS);
+				} else {
+					WriteLog("HD: READ(10) rejected: LBA %u, %u blocks.\n", lba, blocks);
+					SetNextState(DVM_STATUS);
+				}
 			}
 			// Handle "Write" (10) command
 			else if (cmd[0] == 0x2A)
 			{
 				WriteLog("HD: Received command WRITE(10) [%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6], cmd[7], cmd[8], cmd[9]);
 				// Drive next phase
-//				SetNextState(DVM_DATA_OUT);
-//				bytesToSend = ((cmd[7] << 8) | cmd[8]) * 512; // amount is set in blocks
-//				uint32_t lba = (cmd[2] << 24) | (cmd[3] << 16) | (cmd[4] << 8) | cmd[5];
-//				buf = (hdData != NULL ? &hdData[lba * 512] : NULL);
-//				bufPtr = 0;
 				uint32_t blocks = ((uint32_t)cmd[7] << 8) | cmd[8];
 				uint32_t lba = ((uint32_t)cmd[2] << 24) | ((uint32_t)cmd[3] << 16) | ((uint32_t)cmd[4] << 8) | cmd[5];
-				if (!hdData || !hdWritable || !hdFile || !blocks || lba > hdSize / 512 || blocks > (hdSize / 512) - lba)
-				{
-					response = 0x02;
+				if ((cmd[1] & 0xE0) != 0) {
+					SetCheckCondition(0x05, 0x25);
+					SetNextState(DVM_STATUS);
+				}
+				else if (!hdFile) {
+					SetCheckCondition(0x02, 0x3A); // Medium not present
+					SetNextState(DVM_STATUS);
+				}
+				else if (!hdWritable) {
+					SetCheckCondition(0x07, 0x27); // DATA PROTECT: write protected
+					SetNextState(DVM_STATUS);
+				}
+				else if (lba > hdSize / 512 || blocks > (hdSize / 512) - lba) {
+					SetCheckCondition(0x05, 0x21);
+					SetNextState(DVM_STATUS);
+				}
+				else if (blocks > 256) {
+					SetCheckCondition(0x05, 0x24);
+					SetNextState(DVM_STATUS);
+				}
+				else if (blocks == 0) {
+					activeWrite = false;
 					SetNextState(DVM_STATUS);
 				}
 				else
 				{
-					SetNextState(DVM_DATA_OUT);
-					bytesToSend = blocks * 512;
-					buf = hdData + (size_t)lba * 512;
+					WriteLog("HD: WRITE(10) LBA %u, %u blocks (%u bytes).\n", lba, blocks, blocks * 512);
+					activeLBA = lba;
+					activeWrite = true;
+					buf = scsiSectorBuf;
 					bufPtr = 0;
+					bytesToSend = blocks * 512;
+					SetNextState(DVM_DATA_OUT);
 				}
 			}
 			else
 			{
 				WriteLog("HD: Received unhandled 10 command [%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6], cmd[7], cmd[8], cmd[9]);
 				// Return failure...
+				SetCheckCondition(0x05, 0x20); // ILLEGAL REQUEST: invalid command
 				SetNextState(DVM_STATUS);
-				response = 0x02; // "Check Condition" code
 			}
 		}
 		else if ((cmdType == 5) && (cmdLength == 12))
 		{
 			WriteLog("HD: Received unhandled 12 command [%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6], cmd[7], cmd[8], cmd[9], cmd[10], cmd[11]);
 			// Return failure...
+			SetCheckCondition(0x05, 0x20); // ILLEGAL REQUEST: invalid command
 			SetNextState(DVM_STATUS);
-			response = 0x02; // "Check Condition" code
+		}
+		else if (((cmdType == 3) && (cmdLength == 6)) || ((cmdType == 4) && (cmdLength == 16)) ||
+						(((cmdType == 6) || (cmdType == 7)) && (cmdLength == 10)))
+		{
+			// Reserved/vendor-specific command groups are not implemented.
+			// Consume the complete CDB and return CHECK CONDITION rather than
+			// remaining in COMMAND phase indefinitely.
+			WriteLog("HD: Received unsupported SCSI command group %u, opcode $%02X.\n", cmdType, cmd[0]);
+			SetCheckCondition(0x05, 0x20); // ILLEGAL REQUEST: invalid command
+			SetNextState(DVM_STATUS);
 		}
 
 		break;
@@ -470,8 +640,7 @@ static void RunDevice(void)
 	case DVM_STATUS:
 		if (!ACK)
 		{
-			// Return A-OK for everything for now...
-			reg[0] = 0; // N.B.: This is necessary for some reason...
+			reg[0] = response;
 			REQ = true;
 		}
 		else if (REQ && ACK)
@@ -498,7 +667,9 @@ static void RunDevice(void)
 		if (!ACK)
 		{
 			// Return appropriate response
-			reg[0] = response;
+			// MESSAGE IN phase: COMMAND COMPLETE.
+			// This is a message byte, not the SCSI status byte.
+			reg[0] = 0x00;
 			REQ = true;
 		}
 		else if (REQ && ACK)
@@ -745,12 +916,42 @@ static uint8_t SlotROM(uint16_t address)
 }
 
 
+// The firmware's boot code reads block 0 using its own internal parameter
+// convention, then hands control to the boot sector with a "JMP $0801" at
+// $CDDD (ROM bank 11).  Boot ROMs for ProDOS block devices normally leave the
+// *ProDOS* driver call that read block 0 in zero page ($42 command = READ,
+// $43 unit, $44/$45 buffer, $46/$47 block), and compact boot sectors rely  on
+// that: they only set the block number and buffer high byte before calling
+// the driver again.  This card's firmware leaves $42 = 0 (STATUS) instead, so
+// such sectors loop forever on status calls. Reproduce the conventional state
+// just before the hand-off.
+#define BOOT_HANDOFF_ADDR		(0xCDDD - 0xC800)
+#define BOOT_HANDOFF_BANK		11
+
+static void SetProDOSBootParameters(void)
+{
+	AppleWriteMem(0x42, 0x01);				// Command: READ
+	AppleWriteMem(0x43, mainCPU.x);			// Unit: slot << 4, drive 1 (X at hand-off)
+	AppleWriteMem(0x44, 0x00);				// Buffer: $0800
+	AppleWriteMem(0x45, 0x08);
+	AppleWriteMem(0x46, 0x00);				// Block: 0
+	AppleWriteMem(0x47, 0x00);
+	WriteLog("HD: Boot hand-off: left ProDOS READ call in $42-$47 (unit $%02X) for the boot sector.\n", mainCPU.x);
+}
+
+
 static uint8_t SlotIOExtraR(uint16_t address)
 {
-	if (address < 0x400)
+	if (address < 0x400) {
 		return staticRAM[(ramBank * 0x400) + address];
-	else
-		return a2hsScsiROM[(romBank * 0x400) + address - 0x400];
+	}
+
+	// About to execute the firmware's JMP $0801 (the byte at $CDDD is the opcode)
+	if ((address == BOOT_HANDOFF_ADDR) && (romBank == BOOT_HANDOFF_BANK)) {
+		SetProDOSBootParameters();
+	}
+
+	return a2hsScsiROM[(romBank * 0x400) + address - 0x400];
 }
 
 
@@ -758,61 +959,49 @@ static void SlotIOExtraW(uint16_t address, uint8_t byte)
 {
 	if (address < 0x400)
 		staticRAM[(ramBank * 0x400) + address] = byte;
-	else
-//	{
-		WriteLog("HD: Unhandled HD 1K ROM write ($%02X) @ $C%03X...\n", byte, address + 0x800);
+	else {
+		// The upper 1 KB is ROM; writes are ignored by hardware.
+		//WriteLog("HD: Unhandled HD 1K ROM write ($%02X) @ $C%03X...\n", byte, address + 0x800);
 
-/*		if ((mainCPU.pc == 0xCDDD) && (romBank == 11))
-			dumpDis = true;//*/
-//	}
+//		if ((mainCPU.pc == 0xCDDD) && (romBank == 11))
+//			dumpDis = true;
+	}
 }
 
 
-void InstallHardDrive(uint8_t slot)
+void InstallHardDrive(uint8_t slot, const char *imageOverride, bool suppressConfiguredImage)
 {
 	SlotData hd = { SlotIOR, SlotIOW, SlotROM, 0, SlotIOExtraR, SlotIOExtraW };
 	InstallSlotHandler(slot, &hd);
-//	char fnBuf[(MAX_PATH * 2) + 1];
 
-	// If this fails to read the file, the pointer is set to NULL
-//	uint32_t size = 0, skip = (uint32_t)-1;
-	// sprintf(fnBuf, "%s%s", settings.disksPath, settings.hd[0]);
+	if (suppressConfiguredImage) {
+		WriteLog("HD: Configured hard disk suppressed by command-line floppy image.\n");
+		return;
+	}
 
-	// Check to see which type of HD image we have...
-//	char * ext = strrchr(settings.hd[0], '.');
+	const char *configuredImage = settings.hd[0];
 
-//	if (ext != NULL)
-	if (settings.hd[0][0] == 0)
-	{
-//		if (strcasecmp(ext, ".2mg") == 0)
-//			skip = 0x40;
-//		else if (strcasecmp(ext, ".hdv") == 0)
-//			skip = 0;
+	if (!imageOverride && settings.hd[1][0])
+		WriteLog("HD: harddrive2 ('%s') is configured, but a second hard drive is not emulated yet; ignoring it.\n", settings.hd[1]);
+
+	const char *imageName = imageOverride ? imageOverride : configuredImage;
+	if (!imageName || !imageName[0]) {
 		WriteLog("HD: No hard drive image configured.\n");
 		return;
 	}
 
-//	if (skip == (uint32_t)-1)
 	char filename[(MAX_PATH * 2) + 2];
-	if (strchr(settings.hd[0], '/') || strchr(settings.hd[0], '\\')
-		|| (settings.hd[0][0] && settings.hd[0][1] == ':'))
-		snprintf(filename, sizeof(filename), "%s", settings.hd[0]);
-	else
-		snprintf(filename, sizeof(filename), "%s%s", settings.disksPath, settings.hd[0]);
+	if (imageOverride || strchr(imageName, '/') || strchr(imageName, '\\') ||
+		(imageName[0] && imageName[1] == ':')) {
+		snprintf(filename, sizeof(filename), "%s", imageName);
+	} else {
+		snprintf(filename, sizeof(filename), "%s%s", settings.disksPath, imageName);
+	}
 
-	if (!LoadHardDriveImage(filename))
-	{
-//		hdData = NULL;
-//		WriteLog("HD: Unknown HD image file: %s\n", settings.hd[0]);
+	if (!LoadHardDriveImage(filename)) {
 		WriteLog("HD: Could not load hard drive image '%s'.\n", filename);
 		return;
 	}
 
-//	hdData = ReadFile(fnBuf, &size, skip);
-
-//	if (hdData)
-//		WriteLog("HD: Read Hard Drive image file '%s', %u bytes ($%X)\n", settings.hd[0], size, size);
-//	else
-//		WriteLog("HD: Could not read Hard Drive image file!\n");
 	WriteLog("HD: Loaded '%s', %u bytes (%u blocks).\n", filename, hdSize, hdSize / 512);
 }

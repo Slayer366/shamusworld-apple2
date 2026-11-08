@@ -63,9 +63,9 @@ class FloppyDrive
 		void RunSequencer(uint32_t);
 
 	protected:
-		void DetectImageType(const char * filename, uint8_t driveNum);
+		void DetectImageType(const char * filename, uint8_t driveNum, bool forceDOS33 = false, uint8_t volume = 0xFE);
 		void WriteBits(uint8_t * dest, const uint8_t * src, uint16_t bits, uint16_t * start);
-		void WOZifyImage(uint8_t driveNum);
+		void WOZifyImage(uint8_t driveNum, uint8_t volume = 0xFE);
 
 	private:
 		char imageName[2][MAX_PATH];
@@ -97,6 +97,14 @@ class FloppyDrive
 		uint16_t trackLength[2];
 //		uint8_t pulseTiming;	// WOZ disk "optimal" pulse timing (in 0.25µs)
 		uint8_t window;
+
+		// NIB-only "grace latch": a byte the sequencer has finished but the CPU
+		// has not yet read is held for a short time after the LSS would have
+		// cleared it, and is delivered at most once.
+		bool nibPrevValid;
+		bool nibLatchPending;
+		uint8_t nibLatchByte;
+		uint16_t nibLatchAge;	// In sequencer clocks (2 per CPU cycle)
 };
 
 // Exported functions/variables

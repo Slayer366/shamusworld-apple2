@@ -483,6 +483,67 @@ uint8_t counter = 0;
 uint32_t totalCPU = 0;
 uint64_t lastClock = 0;
 #endif
+
+// The extension alone cannot distinguish .po/.2mg/.2img floppy images from hard disks.
+static bool ClassifyCommandLineImage(const char *filename, bool &isHardDisk)
+{
+	isHardDisk = false;
+	const char *dot = strrchr(filename, '.');
+	if (!dot) {
+		return false;
+	}
+
+	char extension[16];
+	size_t extLength = strlen(dot);
+	if (extLength >= sizeof(extension)) {
+		return false;
+	}
+	for (size_t i = 0; i <= extLength; ++i)
+		extension[i] = (char)tolower((unsigned char)dot[i]);
+
+	if (!strcmp(extension, ".hdv")) {
+		isHardDisk = true;
+		return true;
+	}
+
+	if (strcmp(extension, ".po") && strcmp(extension, ".2mg") &&
+		strcmp(extension, ".2img")) {
+		return false;
+	}
+
+	// A 2MG header gives us a format ID and block count.
+	// Raw .po images are classified by their file size.
+	FILE *image = fopen(filename, "rb");
+	isHardDisk = true; // default for an unrecognized/missing image
+	if (!image) {
+		return true;
+	}
+
+	uint8_t header[32];
+	size_t bytesRead = fread(header, 1, sizeof(header), image);
+	long fileSize = -1;
+	if (fseek(image, 0, SEEK_END) == 0) {
+		fileSize = ftell(image);
+	}
+	fclose(image);
+	if (bytesRead >= sizeof(header) && !memcmp(header, "2IMG", 4)) {
+		uint32_t imageFormat = (uint32_t)header[12] | ((uint32_t)header[13] << 8) | ((uint32_t)header[14] << 16) | ((uint32_t)header[15] << 24);
+		uint32_t blockCount = (uint32_t)header[20] | ((uint32_t)header[21] << 8) | ((uint32_t)header[22] << 16) | ((uint32_t)header[23] << 24);
+
+		if (imageFormat == 0 || imageFormat == 2) {
+			isHardDisk = false;
+		}
+		else if (imageFormat == 1) {
+			isHardDisk = (blockCount >= 1600);
+		}
+	} else if (fileSize >= 0) {
+		isHardDisk = (fileSize > 143400);
+	}
+
+	return true;
+}
+
+
 //
 // Main loop
 //
@@ -490,6 +551,18 @@ int main(int argc, char *argv[])
 {
 	InitLog("./apple2.log");
 	LoadSettings();
+
+	const char *commandLineHDImage = NULL;
+	const char *commandLineFloppyImage = NULL;
+	if (argc == 2) {
+		bool isHardDisk = false;
+		bool recognized = ClassifyCommandLineImage(argv[1], isHardDisk);
+		if (recognized && isHardDisk)
+			commandLineHDImage = argv[1];
+		else
+			commandLineFloppyImage = argv[1];
+	}
+
 	srand(time(NULL));			// Initialize RNG
 
 #if 0
@@ -546,7 +619,8 @@ int main(int argc, char *argv[])
 	// Install devices in slots
 	InstallFloppy(SLOT6);
 	InstallMockingboard(SLOT4);
-	InstallHardDrive(SLOT7);
+//	InstallHardDrive(SLOT7);
+	InstallHardDrive(SLOT7, commandLineHDImage, commandLineFloppyImage != NULL);
 
 	// Set up V65C02 execution context
 	memset(&mainCPU, 0, sizeof(V65C02REGS));
@@ -617,15 +691,13 @@ So we need to decouple the CPU thread from the host video thread, and have the C
 #endif
 
 //Load Parameter disk image
-    if(argc == 2){
-        bool success = floppyDrive[0].LoadImage(argv[1]);
-        // if (!success) {std::cout<< "Could not load file  \n";}
-		// printf( "argc: %d\n", argc );
+	if(commandLineFloppyImage) {
+		bool success = floppyDrive[0].LoadImage(commandLineFloppyImage);
 		if (!success) {
-            printf( "Could not load file: %s \n", argv[1]);
-            return true;
-        }
-    }
+			printf( "Could not load file: %s \n", commandLineFloppyImage);
+			//return true;
+		}
+	}
 
 	WriteLog("Entering main loop...\n");
 

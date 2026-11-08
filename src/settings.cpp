@@ -70,11 +70,6 @@ void LoadSettings(void)
 	strcpy(settings.disksPath, GetValue("disks", "./disks/"));
 	strcpy(settings.hd[0], GetValue("harddrive1", ""));
 	strcpy(settings.hd[1], GetValue("harddrive2", ""));
-	strcpy(settings.hd[2], GetValue("harddrive3", ""));
-	strcpy(settings.hd[3], GetValue("harddrive4", ""));
-	strcpy(settings.hd[4], GetValue("harddrive5", ""));
-	strcpy(settings.hd[5], GetValue("harddrive6", ""));
-	strcpy(settings.hd[6], GetValue("harddrive7", ""));
 	strcpy(settings.autoStatePath, GetValue("autoStateFilename", "./apple2auto.state"));
 
 	settings.cardSlot[0] = GetValue("card1", 6);	// Disk ][
@@ -108,11 +103,6 @@ void SaveSettings(void)
 	SetValue("disks", settings.disksPath);
 	SetValue("harddrive1", settings.hd[0]);
 	SetValue("harddrive2", settings.hd[1]);
-	SetValue("harddrive3", settings.hd[2]);
-	SetValue("harddrive4", settings.hd[3]);
-	SetValue("harddrive5", settings.hd[4]);
-	SetValue("harddrive6", settings.hd[5]);
-	SetValue("harddrive7", settings.hd[6]);
 	SetValue("card1", settings.cardSlot[0]);
 	SetValue("card2", settings.cardSlot[1]);
 	SetValue("card3", settings.cardSlot[2]);

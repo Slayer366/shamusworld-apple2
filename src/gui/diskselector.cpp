@@ -355,7 +355,11 @@ bool DiskSelector::HasLegalExtension(const char * name)
 	if ((strcasecmp(ext, ".dsk") == 0)
 		|| (strcasecmp(ext, ".do") == 0)
 		|| (strcasecmp(ext, ".po") == 0)
-		|| (strcasecmp(ext, ".woz") == 0))
+		|| (strcasecmp(ext, ".woz") == 0)
+		|| (strcasecmp(ext, ".nib") == 0)
+		|| (strcasecmp(ext, ".nb2") == 0)
+		|| (strcasecmp(ext, ".2mg") == 0)
+		|| (strcasecmp(ext, ".2img") == 0))
 		return true;
 
 	return false;

@@ -3,7 +3,8 @@
 
 #include <stdint.h>
 
-void InstallHardDrive(uint8_t slot);
+//void InstallHardDrive(uint8_t slot);
+void InstallHardDrive(uint8_t slot, const char *imageOverride, bool suppressConfiguredImage);
 
 #endif	// __HARDDRIVE_H__
 

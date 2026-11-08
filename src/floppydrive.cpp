@@ -37,6 +37,12 @@ enum { IO_MODE_READ, IO_MODE_WRITE };
 
 static const uint8_t bitMask[8] = { 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01 };
 
+// How long (in sequencer clocks, 2 per CPU cycle) a finished-but-unread NIB
+// byte stays deliverable after the LSS has cleared the data register.  Some
+// loaders read their first data nibble a few cycles after the LSS's ~8
+// cycle window has closed.  32 clocks = 16 cycles.
+#define NIB_GRACE_CLOCKS	32
+
 static const uint8_t sequencerROM[256] = {
 	0x18, 0x18, 0x18, 0x18, 0x0A, 0x0A, 0x0A, 0x0A,
 	0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, // $00
@@ -225,6 +231,10 @@ FloppyDrive::FloppyDrive(): motorOn(0), activeDrive(0), ioMode(IO_MODE_READ),  i
 	diskType[0] = diskType[1] = DT_EMPTY;
 	imageDirty[0] = imageDirty[1] = false;
 	imageName[0][0] = imageName[1][0] = 0;			// Zero out filenames
+	nibPrevValid = false;
+	nibLatchPending = false;
+	nibLatchByte = 0;
+	nibLatchAge = 0;
 }
 
 FloppyDrive::~FloppyDrive()
@@ -257,13 +267,90 @@ bool FloppyDrive::LoadImage(const char * filename, uint8_t driveNum/*= 0*/)
 		return false;
 	}
 
-	if (disk[driveNum])
+	// 2MG is a container, not a disk encoding.  Sector payloads use the
+	// existing sector-image path; nibble payloads use the raw-track path below.
+	bool is2MG = false;
+	bool forceDOS33 = false;
+	bool imageLocked = false;
+	uint8_t imageVolume = 0xFE;
+	char detectName[MAX_PATH];
+	const char * detectFilename = filename;
+	if (diskSize[driveNum] >= 4 && memcmp(buffer, "2IMG", 4) == 0)
+	{
+		if (diskSize[driveNum] < 64)
+		{
+			free(buffer);
+			WriteLog("FLOPPY: 2MG header is truncated.\n");
+			return false;
+		}
+
+		const uint32_t headerSize = (uint32_t)buffer[8] | ((uint32_t)buffer[9] << 8);
+		const uint32_t version = (uint32_t)buffer[10] | ((uint32_t)buffer[11] << 8);
+		const uint32_t imageFormat = (uint32_t)buffer[12] | ((uint32_t)buffer[13] << 8) |
+			((uint32_t)buffer[14] << 16) | ((uint32_t)buffer[15] << 24);
+		const uint32_t flags = (uint32_t)buffer[16] | ((uint32_t)buffer[17] << 8) |
+			((uint32_t)buffer[18] << 16) | ((uint32_t)buffer[19] << 24);
+		const uint32_t numBlocks = (uint32_t)buffer[20] | ((uint32_t)buffer[21] << 8) |
+			((uint32_t)buffer[22] << 16) | ((uint32_t)buffer[23] << 24);
+		const uint32_t dataOffset = (uint32_t)buffer[24] | ((uint32_t)buffer[25] << 8) |
+			((uint32_t)buffer[26] << 16) | ((uint32_t)buffer[27] << 24);
+		uint32_t dataLength = (uint32_t)buffer[28] | ((uint32_t)buffer[29] << 8) |
+			((uint32_t)buffer[30] << 16) | ((uint32_t)buffer[31] << 24);
+
+		if (headerSize != 64 || version != 1 || dataOffset < headerSize || dataOffset > diskSize[driveNum])
+		{
+			free(buffer);
+			WriteLog("FLOPPY: Invalid or unsupported 2MG header.\n");
+			return false;
+		}
+
+		if (dataLength == 0 && imageFormat == 1 && numBlocks <= 0xFFFFFFFFu / 512u) {
+			dataLength = numBlocks * 512u;
+		}
+
+		const bool sectorImage = (imageFormat <= 1 && dataLength == 143360);
+		const bool nibbleImage = (imageFormat == 2 && (dataLength == 232960 || dataLength == 223440));
+		if ((!sectorImage && !nibbleImage) || dataLength > diskSize[driveNum] - dataOffset)
+		{
+			free(buffer);
+			WriteLog("FLOPPY: Unsupported or invalid 2MG payload (format %u, length %u).\n", imageFormat, dataLength);
+			return false;
+		}
+
+		// Move the payload to the start of the allocation. Sector images retain
+		// the established conversion path; format 2 is raw 6656-byte tracks.
+		memmove(buffer, buffer + dataOffset, dataLength);
+		diskSize[driveNum] = dataLength;
+		imageLocked = (flags & 0x80000000u) != 0;
+
+		// In 2MG, flag bit 8 says the low byte contains the DOS volume number.
+		// Otherwise retain the conventional Disk II default (254).
+		if (imageFormat == 0 && (flags & 0x00000100u)) {
+			imageVolume = (uint8_t)(flags & 0xFFu);
+		}
+
+		if (sectorImage)
+		{
+			forceDOS33 = (imageFormat == 0);
+			strncpy(detectName, imageFormat == 0 ? "disk.dsk" : "disk.po", sizeof(detectName));
+			detectName[sizeof(detectName) - 1] = 0;
+			detectFilename = detectName;
+		}
+		is2MG = true;
+	}
+
+	if (disk[driveNum]) {
 		free(disk[driveNum]);
+	}
 
 	disk[driveNum] = buffer;
 
 	diskImageReady = false;
-	DetectImageType(filename, driveNum);
+//	DetectImageType(filename, driveNum);
+	DetectImageType(detectFilename, driveNum, forceDOS33, imageVolume);
+	if (is2MG && diskType[driveNum] != DFT_UNKNOWN) {
+		((WOZ2 *)disk[driveNum])->writeProtected = imageLocked ? 1 : 0;
+	}
 	strcpy(imageName[driveNum], filename);
 	diskImageReady = true;
 
@@ -343,7 +430,7 @@ SpawnMessage("Drive 0: %s...", imageName[0]);
 /*
 Need to add some type of error checking here, so we can report back on bad images, etc. (basically, it does by returning DFT_UNKNOWN, but we could do better)
 */
-void FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum)
+void FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum, bool forceDOS33, uint8_t volume)
 {
 	diskType[driveNum] = DFT_UNKNOWN;
 
@@ -369,6 +456,42 @@ void FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum)
 		WriteLog("FLOPPY: OBT is %d\n", ((WOZ2 *)disk[driveNum])->optimalBitTmg);
 		diskType[driveNum] = DT_WOZ;
 	}
+	else if (diskSize[driveNum] == 232960 || diskSize[driveNum] == 223440)
+	{
+		// NIB: 35 tracks x 6656 bytes. NB2: 35 tracks x 6384 bytes.
+		// Both contain already-nibblized Apple II bytes, so copy each track
+		// directly into the WOZ2 track storage without sector re-encoding.
+		const uint32_t bytesPerTrack = diskSize[driveNum] == 232960 ? 6656 : 6384;
+		uint8_t * source = disk[driveNum];
+		uint32_t wozSize;
+		uint8_t * wozData = InitWOZ(&wozSize);
+		if (wozData == NULL) {
+			return;
+		}
+
+		WOZ2 & woz = *((WOZ2 *)wozData);
+
+		// Force every virtual track element to preserve the full raw nibble block capacity size
+		for (uint32_t i = 0; i < 40; ++i)
+		{
+			woz.track[i].bitCount = bytesPerTrack * 8;
+		}
+
+		for (uint32_t track = 0; track < 35; ++track)
+		{
+			uint8_t * destination = wozData + (Uint16LE(woz.track[track].startingBlock) * 512);
+			memcpy(destination, source + (track * bytesPerTrack), bytesPerTrack);
+			woz.track[track].bitCount = Uint32LE(bytesPerTrack * 8);
+		}
+
+		free(source);
+		disk[driveNum] = wozData;
+		diskSize[driveNum] = wozSize;
+		diskType[driveNum] = DT_NYBBLE;
+		trackLength[driveNum] = (uint16_t)(bytesPerTrack * 8);
+		currentPos[driveNum] = 0;
+		WriteLog("FLOPPY: Converted %s image to WOZ2 tracks.\n", bytesPerTrack == 6656 ? "NIB" : "NB2");
+	}
 	else if (diskSize[driveNum] == 143360)
 	{
 		const char * ext = strrchr(filename, '.');
@@ -393,9 +516,11 @@ void FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum)
 				{ 0x04, 0x00, 0x00, 0x00 }		// @ $A00
 			};
 
-			bool foundProdos = true;
+//			bool foundProdos = true;
+			bool foundProdos = !forceDOS33;
 
-			for(uint32_t i=0; i<4; i++)
+//			for(uint32_t i=0; i<4; i++)
+			for(uint32_t i=0; foundProdos && i<4; i++)
 			{
 				for(uint32_t j=0; j<4; j++)
 				{
@@ -413,12 +538,12 @@ void FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum)
 
 // Actually, it just might matter WRT to nybblyzing/denybblyzing
 // (and, it does... :-P)
-		WOZifyImage(driveNum);
+		WOZifyImage(driveNum, volume);
 	}
 	else if (diskSize[driveNum] == 143488)
 	{
 		diskType[driveNum] = DT_DOS33_HDR;
-		WOZifyImage(driveNum);
+		WOZifyImage(driveNum, volume);
 	}
 
 // #warning "Should we attempt to nybblize unknown images here? Definitely SHOULD issue a warning!"
@@ -426,7 +551,7 @@ void FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum)
 
 	WriteLog("FLOPPY: Detected image type %s...\n", (diskType[driveNum] == DT_DOS33 ?
 		"DOS 3.3" : (diskType[driveNum] == DT_DOS33_HDR ?
-		"DOS 3.3 (headered)" : (diskType[driveNum] == DT_PRODOS ? "ProDOS" : (diskType[driveNum] == DT_WOZ ? "WOZ" : "unknown")))));
+		"DOS 3.3 (headered)" : (diskType[driveNum] == DT_PRODOS ? "ProDOS" : (diskType[driveNum] == DT_NYBBLE ? "NIB/NB2" : (diskType[driveNum] == DT_WOZ ? "WOZ" : "unknown"))))));
 }
 
 //
@@ -452,7 +577,7 @@ void FloppyDrive::WriteBits(uint8_t * dest, const uint8_t * src, uint16_t bits, 
 	}
 }
 
-void FloppyDrive::WOZifyImage(uint8_t driveNum)
+void FloppyDrive::WOZifyImage(uint8_t driveNum, uint8_t volume)
 {
 	// hdr (21) + nybbles (343) + footer (48) = 412 bytes per sector
 	// (not incl. 64 byte track marker)
@@ -502,13 +627,18 @@ void FloppyDrive::WOZifyImage(uint8_t driveNum)
 		// Write out the following sectors
 		for(uint8_t sector=0; sector<16; sector++)
 		{
-			// Set up the sector address header
+			// Set up the sector address header. 2MG may specify a DOS volume;
+			// ordinary sector images retain the conventional default of 254.
+			addressHeader[3] = ((volume >> 1) & 0x55) | 0xAA;
+			addressHeader[4] =  (volume       & 0x55) | 0xAA;
 			addressHeader[5] = ((trk >> 1) & 0x55) | 0xAA;
 			addressHeader[6] =  (trk       & 0x55) | 0xAA;
 			addressHeader[7] = ((sector >> 1) & 0x55) | 0xAA;
 			addressHeader[8] =  (sector       & 0x55) | 0xAA;
-			addressHeader[9] = (((trk ^ sector ^ 0xFE) >> 1) & 0x55) | 0xAA;
-			addressHeader[10] = ((trk ^ sector ^ 0xFE)       & 0x55) | 0xAA;
+//			addressHeader[9] = (((trk ^ sector ^ 0xFE) >> 1) & 0x55) | 0xAA;
+//			addressHeader[10] = ((trk ^ sector ^ 0xFE)       & 0x55) | 0xAA;
+			addressHeader[9] = (((trk ^ sector ^ volume) >> 1) & 0x55) | 0xAA;
+			addressHeader[10] = ((trk ^ sector ^ volume)       & 0x55) | 0xAA;
 
 			WriteBits(img, addressHeader, 14 * 8, &dstBitPtr);
 
@@ -884,7 +1014,10 @@ WriteLog("FLOPPY: Current pos pre: %u, ", currentPos[activeDrive]);
 		currentPos[activeDrive] = (uint32_t)((float)currentPos[activeDrive] * (newBitLen / oldBitLen));
 WriteLog("post: %u; newBitLen/old = %.1f/%.1f\n", currentPos[activeDrive], newBitLen, oldBitLen);
 
-		trackLength[activeDrive] = (uint16_t)newBitLen;
+		if (diskType[activeDrive] != DT_NYBBLE)
+		{
+			trackLength[activeDrive] = (uint16_t)newBitLen;
+		}
 //		SpawnMessage("Stepping to track %u...", headPos[activeDrive] >> 2);
 		SpawnMessage("Loading...");
 	}
@@ -904,9 +1037,12 @@ void FloppyDrive::ControlMotor(uint8_t addr)
 	motorOn = addr;
 
 	if (motorOn)
+	{
 		readPulse = 0;
-	else
+		nibLatchPending = false;
+	} else {
 		driveOffTimeout = 2000000;
+	}
 
 WriteLog("FLOPPY: Turning drive motor %s\n", (motorOn ? "ON" : "off"));
 }
@@ -953,23 +1089,45 @@ uint8_t FloppyDrive::DataRegister(void)
 	{
 		WOZ2 & woz = *((WOZ2 *)disk[activeDrive]);
 		uint8_t tIdx = woz.tmap[headPos[activeDrive]];
-		uint32_t bitLen = (tIdx == 0xFF ? 51200
-			: Uint16LE(woz.track[tIdx].bitCount));
+		uint32_t bitLen = (tIdx == 0xFF ? 51200 : Uint16LE(woz.track[tIdx].bitCount));
+		if (diskType[activeDrive] == DT_NYBBLE)
+		{
+			bitLen = trackLength[activeDrive];
+		}
 //		SpawnMessage("%u:Reading $%02X from track %u, sector %u...",
 //			activeDrive, dataRegister, headPos[activeDrive] >> 2, (uint32_t)(((float)currentPos[activeDrive] / (float)bitLen) * 16.0f));
 		SpawnMessage("Loading...");
 		ioMode = IO_MODE_READ;
 		ioHappened = true;
 
-if ((seenReadSinceStep == false) && (slSwitch == false) && (rwSwitch == false) && ((iorAddr & 0x0F) == 0x0C))
-{
-	seenReadSinceStep = true;
-	WriteLog("%u:Reading $%02X from track %2.2f, sector %u (delta since seek: %lu cycles) [%u]...\n",
-		activeDrive, dataRegister, (float)headPos[activeDrive] / 4.0f, (uint32_t)(((float)currentPos[activeDrive] / (float)bitLen) * 16.0f), mainCPU.clock - stepperTime, mainCPU.clock & 0xFFFFFFFF);
-}
+		if ((seenReadSinceStep == false) && (slSwitch == false) && (rwSwitch == false) && ((iorAddr & 0x0F) == 0x0C))
+		{
+			seenReadSinceStep = true;
+			WriteLog("%u:Reading $%02X from track %2.2f, sector %u (delta since seek: %lu cycles) [%u]...\n",
+				activeDrive, dataRegister, (float)headPos[activeDrive] / 4.0f, (uint32_t)(((float)currentPos[activeDrive] / (float)bitLen) * 16.0f), mainCPU.clock - stepperTime, mainCPU.clock & 0xFFFFFFFF);
+		}
 	}
 
-	return dataRegister;
+	uint8_t value = dataRegister;
+
+	// NIB images only (they carry no sub-nibble timing, so nothing can depend
+	// on the exact LSS clear time).  If the LSS has already cleared a byte the
+	// CPU never got to read, hand it over once, within the grace period.
+	// A byte that is read while still valid is marked consumed, so nothing
+	// is ever delivered twice.
+	if (diskImageReady && (diskType[activeDrive] == DT_NYBBLE) && !slSwitch && !rwSwitch)
+	{
+		if (value & 0x80) {
+			nibLatchPending = false;
+		}
+		else if (nibLatchPending && (nibLatchAge <= NIB_GRACE_CLOCKS))
+		{
+			value = nibLatchByte;
+			nibLatchPending = false;
+		}
+	}
+
+	return value;
 }
 
 // MMIO: Writes from $C08x to $C0XX on odd addresses
@@ -1079,7 +1237,21 @@ void FloppyDrive::RunSequencer(uint32_t cyclesToRun)
 
 	WOZ2 & woz = *((WOZ2 *)disk[activeDrive]);
 	uint8_t tIdx = woz.tmap[headPos[activeDrive]];
-	uint8_t * tdata = disk[activeDrive] + (Uint16LE(woz.track[tIdx].startingBlock) * 512);
+
+	// Force a safe linear track lookup index specifically for raw nibbles to prevent out-of-bounds pointer reads
+	if (diskType[activeDrive] == DT_NYBBLE)
+	{
+		tIdx = headPos[activeDrive] / 4;
+		if (tIdx > 34) {
+			tIdx = 34;
+		}
+	}
+
+	uint8_t * tdata = NULL;
+	if (tIdx != 0xFF) {
+		tdata = disk[activeDrive] + (Uint16LE(woz.track[tIdx].startingBlock) * 512);
+	}
+
 	// We have to divide the optimal bit timing by 4 because we only have a 0.5µs granularity here (with the doubling of the "cyclesToRun").  The OBT has a granularity of 0.125µs.  Not sure how to fix that--have to separate the pulse handling from the sequencer?
 	// N.B.: Border Zone has an OBT of 28, when divides evenly by 4, but it still fails...
 	uint8_t pulseTiming = woz.optimalBitTmg / 4;
@@ -1087,10 +1259,8 @@ void FloppyDrive::RunSequencer(uint32_t cyclesToRun)
 	// It's x2 because the sequencer clock runs twice as fast as the CPU clock.
 	cyclesToRun *= 2;
 
-//extern bool dumpDis;
-//static bool tripwire = false;
 uint8_t chop = 0;
-//static uint32_t lastPos = 0;
+
 if (logSeq)
 {
 	WriteLog("DISKSEQ: Running for %d cycles [rw=%hhd, sl=%hhd, reg=%02X, bus=%02X]\n", cyclesToRun, rwSwitch, slSwitch, dataRegister, cpuDataBus);
@@ -1098,11 +1268,7 @@ if (logSeq)
 
 	while (cyclesToRun-- > 0)
 	{
-//		pulseClock = (pulseClock + 1) & 0x07;
-//		pulseClock = (pulseClock + 1) % 8;
 		pulseClock = (pulseClock + 1) % pulseTiming;
-// 7 doesn't work...  Is that 3.5µs?  Seems to be.  Which means to get a 0.25µs granularity here, we need to double the # of cycles to run...
-//		pulseClock = (pulseClock + 1) % 7;
 
 		if (pulseClock == 0)
 		{
@@ -1126,8 +1292,11 @@ if (logSeq)
 //WriteLog("[%d]", tdata[bytePos] & bitMask[bitPos] ? 1 : 0);
 			}
 
+			// The Disk II read path is pulse-based for every image format.
+			// NIB stores the encoded track bits directly, but must still pass
+			// through the same read-head delay and logic-state sequencer.
 			readPulse = (window >> 1) & 0x01; // Read pulse delayed by about 5µs
-			currentPos[activeDrive] = (currentPos[activeDrive] + 1) % trackLength[activeDrive];
+			currentPos[activeDrive] = (currentPos[activeDrive] + 1) % (uint16_t)trackLength[activeDrive];
 
 			// If we hit more than 2 zero bits in a row, simulate the disk head
 			// reader's Automatic Gain Control (AGC) turning itself up too high
@@ -1137,7 +1306,8 @@ if (logSeq)
 N.B.: Had to up this to 3 because Up N' Down had some weird sync bytes (FE10).  May have to up it some more.
 */
 //			if ((zeroBitCount > 3) || (tIdx == 0xFF))
-			if (((window & 0x0F) == 0) || (tIdx == 0xFF))
+//			if (((window & 0x0F) == 0) || (tIdx == 0xFF))
+			if (diskType[activeDrive] != DT_NYBBLE && (((window & 0x0F) == 0) || (tIdx == 0xFF)))
 			{
 				if (prng & 0x00001)
 				{
@@ -1211,19 +1381,6 @@ sprintf(&sequence[seqLen], "(%02X)%02X ", nextState, sequencerState);
 				else
 					// Otherwise, punch in the zero
 					tdata[bytePos] &= ~bitMask[bitPos];
-
-#if 0
-if (dumpDis || tripwire)
-{
-tripwire = true;
-WriteLog("[%s]", (dataRegister & 0x80 ? "1" : "0"));
-if (lastPos == currentPos[activeDrive])
-	WriteLog("{STOMP}");
-else if ((lastPos + 1) != currentPos[activeDrive])
-	WriteLog("{LAG}");
-lastPos = currentPos[activeDrive];
-}
-#endif
 			}
 }
 			break;
@@ -1245,18 +1402,6 @@ lastPos = currentPos[activeDrive];
 				uint16_t bytePos = currentPos[activeDrive] / 8;
 				uint8_t bitPos = currentPos[activeDrive] % 8;
 				tdata[bytePos] |= bitMask[bitPos];
-#if 0
-if (dumpDis || tripwire)
-{
-tripwire = true;
-WriteLog("[%s]", (dataRegister & 0x80 ? "1" : "0"));
-if (lastPos == currentPos[activeDrive])
-	WriteLog("{STOMP}");
-else if ((lastPos + 1) != currentPos[activeDrive])
-	WriteLog("{LAG}");
-lastPos = currentPos[activeDrive];
-}
-#endif
 			}
 }
 			break;
@@ -1270,8 +1415,29 @@ lastPos = currentPos[activeDrive];
 			WriteLog("Invalid LSS state encountered! (opcode: $%X [full state: $%02X])\n", sequencerState & 0x0F, sequencerState);
 		}
 
-		if (readPulse > 0)
+		// NIB only: remember a newly completed byte for the grace latch
+		if (diskType[activeDrive] == DT_NYBBLE)
+		{
+			bool nowValid = ((dataRegister & 0x80) != 0);
+
+			if (nowValid && !nibPrevValid)
+			{
+				nibLatchByte = dataRegister;
+				nibLatchPending = true;
+				nibLatchAge = 0;
+			}
+
+			nibPrevValid = nowValid;
+
+			if (nibLatchPending && (nibLatchAge < 0xFFFF)) {
+				nibLatchAge++;
+			}
+		}
+
+
+		if (readPulse > 0) {
 			readPulse--;
+		}
 	}
 
 if (logSeq)
