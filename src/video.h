@@ -16,6 +16,7 @@
 void TogglePalette(void);
 void CycleScreenTypes(void);
 void SpawnMessage(const char * text, ...);
+void SpawnErrorMessage(const char * text, ...);	// Stays up for about 5 seconds and ordinary msgs move below it
 bool InitVideo(void);
 void VideoDone(void);
 void RenderAppleScreen(SDL_Renderer *);

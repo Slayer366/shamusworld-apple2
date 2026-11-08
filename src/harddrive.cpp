@@ -969,14 +969,14 @@ static void SlotIOExtraW(uint16_t address, uint8_t byte)
 }
 
 
-void InstallHardDrive(uint8_t slot, const char *imageOverride, bool suppressConfiguredImage)
+bool InstallHardDrive(uint8_t slot, const char *imageOverride, bool suppressConfiguredImage)
 {
 	SlotData hd = { SlotIOR, SlotIOW, SlotROM, 0, SlotIOExtraR, SlotIOExtraW };
 	InstallSlotHandler(slot, &hd);
 
 	if (suppressConfiguredImage) {
 		WriteLog("HD: Configured hard disk suppressed by command-line floppy image.\n");
-		return;
+		return true;
 	}
 
 	const char *configuredImage = settings.hd[0];
@@ -987,7 +987,7 @@ void InstallHardDrive(uint8_t slot, const char *imageOverride, bool suppressConf
 	const char *imageName = imageOverride ? imageOverride : configuredImage;
 	if (!imageName || !imageName[0]) {
 		WriteLog("HD: No hard drive image configured.\n");
-		return;
+		return true;
 	}
 
 	char filename[(MAX_PATH * 2) + 2];
@@ -1000,8 +1000,9 @@ void InstallHardDrive(uint8_t slot, const char *imageOverride, bool suppressConf
 
 	if (!LoadHardDriveImage(filename)) {
 		WriteLog("HD: Could not load hard drive image '%s'.\n", filename);
-		return;
+		return false;
 	}
 
 	WriteLog("HD: Loaded '%s', %u bytes (%u blocks).\n", filename, hdSize, hdSize / 512);
+	return true;
 }

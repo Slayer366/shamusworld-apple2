@@ -544,6 +544,18 @@ static bool ClassifyCommandLineImage(const char *filename, bool &isHardDisk)
 }
 
 
+static void ReportBadImage(const char * path)
+{
+	const char * name = path;
+
+	for(const char * p = path; *p; p++)
+		if ((*p == '/') || (*p == '\\'))
+			name = p + 1;
+
+	SpawnErrorMessage("Could not load: %s", name);
+}
+
+
 //
 // Main loop
 //
@@ -620,7 +632,7 @@ int main(int argc, char *argv[])
 	InstallFloppy(SLOT6);
 	InstallMockingboard(SLOT4);
 //	InstallHardDrive(SLOT7);
-	InstallHardDrive(SLOT7, commandLineHDImage, commandLineFloppyImage != NULL);
+	bool hdImageOK = InstallHardDrive(SLOT7, commandLineHDImage, commandLineFloppyImage != NULL);
 
 	// Set up V65C02 execution context
 	memset(&mainCPU, 0, sizeof(V65C02REGS));
@@ -673,6 +685,22 @@ So we need to decouple the CPU thread from the host video thread, and have the C
 
 */
 
+// Load disk image if provided at CLI
+	if(commandLineFloppyImage)
+	{
+		if (!floppyDrive[0].LoadImage(commandLineFloppyImage))
+		{
+			printf( "Could not load floppy disk image: %s \n", commandLineFloppyImage);
+			ReportBadImage(commandLineFloppyImage);
+		}
+	}
+	if (!hdImageOK)
+	{
+		const char * hdName = (commandLineHDImage ? commandLineHDImage : settings.hd[0]);
+		printf("Could not load hard disk image: %s \n", hdName);
+		ReportBadImage(hdName);
+	}
+
 	running = true;
 	InitializeEventList();
 	// Set frame to fire at 1/60 s interval
@@ -689,15 +717,6 @@ So we need to decouple the CPU thread from the host video thread, and have the C
 //Hmm... CPU does POST (+1), wait, then WAIT (-1)
 //	SDL_sem * mainMutex = SDL_CreateMutex();
 #endif
-
-//Load Parameter disk image
-	if(commandLineFloppyImage) {
-		bool success = floppyDrive[0].LoadImage(commandLineFloppyImage);
-		if (!success) {
-			printf( "Could not load file: %s \n", commandLineFloppyImage);
-			//return true;
-		}
-	}
 
 	WriteLog("Entering main loop...\n");
 

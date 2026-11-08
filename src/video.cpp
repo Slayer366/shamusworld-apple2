@@ -423,6 +423,11 @@ void ToggleTickDisplay(void)
 static uint32_t msgTicks = 0;
 static char message[4096];
 
+// An error message gets its own line and its own timer, so a later ordinary
+// SpawnMessage() (e.g. "Loading...") cannot overwrite it before it is read.
+static uint32_t errorTicks = 0;
+static char errorMessage[64];
+
 void SpawnMessage(const char * text, ...)
 {
 	va_list arg;
@@ -434,16 +439,38 @@ void SpawnMessage(const char * text, ...)
 	msgTicks = 120;
 }
 
+void SpawnErrorMessage(const char * text, ...)
+{
+	va_list arg;
+
+	va_start(arg, text);
+	vsnprintf(errorMessage, sizeof(errorMessage), text, arg);
+	va_end(arg);
+
+	// Long file names must not run off the edge of the screen
+	if (strlen(errorMessage) > 50) {
+		strcpy(errorMessage + 47, "...");
+	}
+
+	errorTicks = 300;		// About 5 seconds at 60 Hz
+}
+
 static void DrawString2(uint32_t x, uint32_t y, uint32_t color, char * msg);
 static void DrawString(void)
 {
 //This approach works, and seems to be fast enough... Though it probably would
 //be better to make the oversized font to match this one...
+
+	// If an error message is displayed, the ordinary message goes on the next line
+	uint32_t y0 = (errorTicks ? 8 + FONT_HEIGHT + 2 : 8);
+
 	for(uint32_t x=7; x<=9; x++)
-		for(uint32_t y=7; y<=9; y++)
+		//for(uint32_t y=7; y<=9; y++)
+		for(uint32_t y=y0-1; y<=y0+1; y++)
 			DrawString2(x, y, 0x00000000, message);
 
-	DrawString2(8, 8, 0x0020FF20, message);
+	//DrawString2(8, 8, 0x0020FF20, message);
+	DrawString2(8, y0, 0x0020FF20, message);
 }
 
 static void DrawString(uint32_t x, uint32_t y, uint32_t color, char * msg)
@@ -1172,6 +1199,12 @@ void RenderVideoFrame(void)
 	else
 	{
 		memset(scrBuffer, 0, VIRTUAL_SCREEN_WIDTH * VIRTUAL_SCREEN_HEIGHT * sizeof(uint32_t));
+	}
+
+	if (errorTicks)
+	{
+		DrawString(8, 8, 0x004060FF, errorMessage);
+		errorTicks--;
 	}
 
 	if (msgTicks)
