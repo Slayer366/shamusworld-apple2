@@ -60,7 +60,7 @@
 #include "gui/diskselector.h"
 #include "gui/config.h"
 #include "gui/gui.h"
-#include "mouse.h"
+#include "custmouse.h"
 
 // Debug and misc. defines
 
@@ -892,7 +892,6 @@ So we need to decouple the CPU thread from the host video thread, and have the C
 
 	while (running)
 	{
-	custMouse.update(sdlRenderer);
 #ifdef CPU_CLOCK_CHECKING
 		double timeToNextEvent = GetTimeToNextEvent();
 #endif
@@ -1290,8 +1289,7 @@ static void FrameCallback(void)
 
 		case SDL_MOUSEMOTION:
 			GUI::MouseMove(event.motion.x, event.motion.y, event.motion.state);
-			mouseX = event.motion.x; // filling in variable to feed event.motion.x to custom mouse cursor in mouse.h
-			mouseY = event.motion.y; // filling in variable to feed event.motion.y to custom mouse cursor in mouse.h
+			custMouse.setPosition(event.motion.x, event.motion.y);
 
 			// Handle mouse showing when the mouse is hidden...
 			if (hideMouseTimeout == -1)

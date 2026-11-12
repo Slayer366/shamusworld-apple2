@@ -101,6 +101,7 @@ INCS = -I. -I./src
 
 OBJS = \
 	obj/config.o          \
+	obj/custmouse.o       \
 	obj/diskselector.o    \
 	obj/font10pt.o        \
 	obj/font12pt.o        \
