@@ -33,9 +33,15 @@ static uint8_t staticRAM[0x2000] = { 0 };
 static uint8_t reg[16];
 
 enum {
-	DVM_DATA_OUT = 0, DVM_DATA_IN = 1, DVM_COMMAND = 2, DVM_STATUS = 3,
-	DVM_MESSAGE_OUT = 6, DVM_MESSAGE_IN = 7, DVM_BUS_FREE = 8,
-	DVM_ARBITRATE = 16, DVM_SELECT = 32
+	DVM_DATA_OUT = 0,
+	DVM_DATA_IN = 1,
+	DVM_COMMAND = 2,
+	DVM_STATUS = 3,
+	DVM_MESSAGE_OUT = 6,
+	DVM_MESSAGE_IN = 7,
+	DVM_BUS_FREE = 8,
+	DVM_ARBITRATE = 16,
+	DVM_SELECT = 32
 };
 
 static bool DATA_BUS = false;
@@ -62,6 +68,17 @@ static uint8_t response;
 static uint8_t senseKey = 0;
 static uint8_t senseASC = 0;
 static uint8_t senseASCQ = 0;
+
+// Clock of the last poll while a selection went unanswered (see HardDriveIsWaiting)
+static uint64_t selectWaitClock = 0;
+static bool selectWaitSeen = false;
+
+// True while the firmware is stuck timing out on an empty SCSI ID.  A pure
+// polling loop, so the emulator can safely fast-forward through it.
+bool HardDriveIsWaiting(void)
+{
+	return selectWaitSeen && ((mainCPU.clock - selectWaitClock) < 4096);
+}
 
 
 static void SetCheckCondition(uint8_t key, uint8_t asc, uint8_t ascq = 0)
@@ -410,7 +427,7 @@ static void RunDevice(void)
 			// Handle "Test Unit Ready" command
 			if (cmd[0] == 0)
 			{
-				WriteLog("HD: Received command TEST UNIT READY\n");
+				//WriteLog("HD: Received command TEST UNIT READY\n");
 				if ((cmd[1] & 0xE0) != 0) {
 					SetCheckCondition(0x05, 0x25); // Logical unit not supported
 				} else if (!hdFile) {
@@ -421,7 +438,7 @@ static void RunDevice(void)
 			// Handle "Request Sense" command
 			else if (cmd[0] == 0x03)
 			{
-				WriteLog("HD: Received command REQUEST SENSE [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
+				//WriteLog("HD: Received command REQUEST SENSE [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
 				memset(senseData, 0, sizeof(senseData));
 				senseData[0] = 0x70; // Current errors, fixed format
 				senseData[2] = senseKey;
@@ -439,14 +456,14 @@ static void RunDevice(void)
 			// Handle "Read" (6) command
 			else if (cmd[0] == 0x08)
 			{
-				WriteLog("HD: Received command READ(6) [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
+				//WriteLog("HD: Received command READ(6) [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
 				uint32_t blocks = cmd[4] ? cmd[4] : 256;
 				uint32_t lba = ((cmd[1] & 0x1F) << 16) | (cmd[2] << 8) | cmd[3];
 				if ((cmd[1] & 0xE0) != 0) {
 					SetCheckCondition(0x05, 0x25); // Logical unit not supported
 					SetNextState(DVM_STATUS);
 				} else if (PrepareRead(lba, blocks)) {
-					WriteLog("HD: READ(6) LBA %u, %u blocks (%u bytes).\n", lba, blocks, bytesToSend);
+					//WriteLog("HD: READ(6) LBA %u, %u blocks (%u bytes).\n", lba, blocks, bytesToSend);
 					SetNextState(blocks ? DVM_DATA_IN : DVM_STATUS);
 				} else {
 					WriteLog("HD: READ(6) rejected: LBA %u, %u blocks.\n", lba, blocks);
@@ -456,7 +473,7 @@ static void RunDevice(void)
 			// Handle "Inquire" command
 			else if (cmd[0] == 0x12)
 			{
-				WriteLog("HD: Received command INQUIRE [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
+				//WriteLog("HD: Received command INQUIRE [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
 				buf = inquireData;
 				bufPtr = 0;
 				bytesToSend = cmd[4] < sizeof(inquireData) ? cmd[4] : sizeof(inquireData);
@@ -471,7 +488,7 @@ static void RunDevice(void)
 			// Handle "Mode Select" command
 			else if (cmd[0] == 0x15)
 			{
-				WriteLog("HD: Received command MODE SELECT [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
+				//WriteLog("HD: Received command MODE SELECT [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
 				activeWrite = false;
 				buf = NULL;
 				bufPtr = 0;
@@ -486,7 +503,7 @@ static void RunDevice(void)
 			// Handle "Mode Sense" command
 			else if (cmd[0] == 0x1A)
 			{
-				WriteLog("HD: Received command MODE SENSE [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
+				//WriteLog("HD: Received command MODE SENSE [%02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
 				if ((cmd[1] & 0xE0) != 0) {
 					SetCheckCondition(0x05, 0x25);
 					SetNextState(DVM_STATUS);
@@ -551,7 +568,7 @@ static void RunDevice(void)
 			// Handle "Read" (10) command
 			else if (cmd[0] == 0x28)
 			{
-				WriteLog("HD: Received command READ(10) [%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6], cmd[7], cmd[8], cmd[9]);
+				//WriteLog("HD: Received command READ(10) [%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X]\n", cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6], cmd[7], cmd[8], cmd[9]);
 				// Drive next phase
 				uint32_t blocks = ((uint32_t)cmd[7] << 8) | cmd[8];
 				uint32_t lba = ((uint32_t)cmd[2] << 24) | ((uint32_t)cmd[3] << 16) | ((uint32_t)cmd[4] << 8) | cmd[5];
@@ -559,7 +576,7 @@ static void RunDevice(void)
 					SetCheckCondition(0x05, 0x25);
 					SetNextState(DVM_STATUS);
 				} else if (PrepareRead(lba, blocks)) {
-					WriteLog("HD: READ(10) LBA %u, %u blocks (%u bytes).\n", lba, blocks, bytesToSend);
+					//WriteLog("HD: READ(10) LBA %u, %u blocks (%u bytes).\n", lba, blocks, bytesToSend);
 					SetNextState(blocks ? DVM_DATA_IN : DVM_STATUS);
 				} else {
 					WriteLog("HD: READ(10) rejected: LBA %u, %u blocks.\n", lba, blocks);
@@ -718,6 +735,13 @@ static uint8_t SlotIOR(uint16_t address)
 	WriteLog("  [%02X %02X %02X %02X %02X %02X %02X %02X] [$C81F=$%02X $C80D=$%02X $C80A=$%02X $C887=$%02X $C806=$%02X $C88F=$%02X $C8EC=$%02X $4F=$%02X]\n", reg[0], reg[1], reg[2], reg[3], reg[4], reg[5], reg[6], reg[7], staticRAM[0x1F], staticRAM[0x0D], staticRAM[0x0A], staticRAM[0x87], staticRAM[0x06], staticRAM[0x8F], staticRAM[0xEC], ram[0x4F]);//*/
 
 			response = (RST ? 0x80 : 0) | (BSY | DEV_BSY ? 0x40 : 0) | (REQ ? 0x20 : 0) | (MSG ? 0x10 : 0) | (C_D ? 0x08 : 0) | (I_O ? 0x04 : 0) | (SEL ? 0x02 : 0);
+
+			// The firmware is polling for a target to answer a selection.  A target
+			// that exists answers within a poll or two; an empty SCSI ID never does.
+			if (SEL && !(BSY || DEV_BSY)) {
+				selectWaitClock = mainCPU.clock;
+				selectWaitSeen = true;
+			}
 			break;
 		case 0x05:
 		{
@@ -971,9 +995,11 @@ static void SlotIOExtraW(uint16_t address, uint8_t byte)
 
 bool InstallHardDrive(uint8_t slot, const char *imageOverride, bool suppressConfiguredImage)
 {
-	SlotData hd = { SlotIOR, SlotIOW, SlotROM, 0, SlotIOExtraR, SlotIOExtraW };
-	InstallSlotHandler(slot, &hd);
-
+	// The card is only installed once there is an image for it to serve.  An
+	// empty SCSI card still gets booted first by the Apple //e's slot scan (it
+	// searches from slot 7 down), and its firmware spends about 3.5 seconds of
+	// emulated time timing out on every empty SCSI ID before giving up and letting
+	// the floppy in slot 6 boot.  Without the card, that wait simply isn't there.
 	if (suppressConfiguredImage) {
 		WriteLog("HD: Configured hard disk suppressed by command-line floppy image.\n");
 		return true;
@@ -1004,5 +1030,7 @@ bool InstallHardDrive(uint8_t slot, const char *imageOverride, bool suppressConf
 	}
 
 	WriteLog("HD: Loaded '%s', %u bytes (%u blocks).\n", filename, hdSize, hdSize / 512);
+	SlotData hd = { SlotIOR, SlotIOW, SlotROM, 0, SlotIOExtraR, SlotIOExtraW };
+	InstallSlotHandler(slot, &hd);
 	return true;
 }

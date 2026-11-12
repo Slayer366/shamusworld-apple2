@@ -30,6 +30,7 @@ struct Settings
 	uint32_t glFilter;
 	uint32_t renderType;
 	bool autoStateSaving;		// Auto-state loading/saving on entry/exit
+	bool enhancedDiskSpeed;		// Run faster than real time while the floppy is being read/written
 
 	// Window settings
 

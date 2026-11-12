@@ -6,5 +6,7 @@
 //void InstallHardDrive(uint8_t slot);
 bool InstallHardDrive(uint8_t slot, const char *imageOverride, bool suppressConfiguredImage);
 
-#endif	// __HARDDRIVE_H__
+// True while the card's firmware is timing out on an empty SCSI ID (boot-time bus scan)
+bool HardDriveIsWaiting(void);
 
+#endif	// __HARDDRIVE_H__

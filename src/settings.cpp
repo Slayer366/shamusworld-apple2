@@ -62,6 +62,7 @@ void LoadSettings(void)
 	settings.glFilter = GetValue("glFilterType", 0);
 	settings.renderType = GetValue("renderType", 0);
 	settings.autoStateSaving = GetValue("autoSaveState", false);
+	settings.enhancedDiskSpeed = GetValue("enhancedDiskSpeed", true);
 
 	settings.winX = GetValue("windowX", 250);
 	settings.winY = GetValue("windowY", 100);
@@ -89,6 +90,7 @@ void SaveSettings(void)
 {
 	SDL_GetWindowPosition(sdlWindow, &settings.winX, &settings.winY);
 
+	SetValue("enhancedDiskSpeed", settings.enhancedDiskSpeed);
 	SetValue("autoSaveState", settings.autoStateSaving);
 	SetValue("autoStateFilename", settings.autoStatePath);
 	SetValue("useJoystick", settings.useJoystick);

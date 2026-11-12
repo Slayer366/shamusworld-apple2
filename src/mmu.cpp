@@ -347,7 +347,7 @@ void ResetMMUPointers(void)
 //	slot3Memory = (slotC3ROM ? &rom[0] : &rom[0xC300]);
 	pageZeroMemory = (altzp ? &ram2[0x0000] : &ram[0x0000]);
 	SwitchLC();
-#if 1
+#if 0
 WriteLog("RAMWRT = %s\n", (ramwrt ? "ON" : "off"));
 WriteLog("RAMRD = %s\n", (ramrd ? "ON" : "off"));
 WriteLog("SLOTCXROM = %s\n", (intCXROM ? "ON" : "off"));
@@ -588,7 +588,7 @@ uint8_t ReadKeyboard(uint16_t /*addr*/)
 void Switch80STORE(uint16_t address, uint8_t)
 {
 	store80Mode = (bool)(address & 0x01);
-WriteLog("Setting 80STORE to %s...\n", (store80Mode ? "ON" : "off"));
+//WriteLog("Setting 80STORE to %s...\n", (store80Mode ? "ON" : "off"));
 
 	// It seems this affects more than just the text RAM, it also seems to affect the graphics RAM as well...
 	if (store80Mode)
@@ -643,7 +643,7 @@ void SwitchRAMWRT(uint16_t address, uint8_t)
 //
 void SwitchSLOTCXROM(uint16_t address, uint8_t)
 {
-WriteLog("Setting SLOTCXROM to %s...\n", (address & 0x01 ? "ON" : "off"));
+//WriteLog("Setting SLOTCXROM to %s...\n", (address & 0x01 ? "ON" : "off"));
 	intCXROM = (bool)(address & 0x01);
 
 	// INTC8ROM trumps all (only in the $C800--$CFFF range... which we don't account for yet...  :-/)
@@ -710,7 +710,7 @@ We need to see where this is being switched from; if we know that, we can switch
 //
 uint8_t SwitchINTC8ROMR(uint16_t)
 {
-WriteLog("Hitting INTC8ROM (read)...\n");
+//WriteLog("Hitting INTC8ROM (read)...\n");
 	intC8ROM = false;
 	return rom[0xCFFF];
 }
@@ -720,7 +720,7 @@ WriteLog("Hitting INTC8ROM (read)...\n");
 //
 void SwitchINTC8ROMW(uint16_t, uint8_t)
 {
-WriteLog("Hitting INTC8ROM (write)...\n");
+//WriteLog("Hitting INTC8ROM (write)...\n");
 	intC8ROM = false;
 }
 

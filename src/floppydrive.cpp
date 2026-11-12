@@ -231,10 +231,17 @@ FloppyDrive::FloppyDrive(): motorOn(0), activeDrive(0), ioMode(IO_MODE_READ),  i
 	diskType[0] = diskType[1] = DT_EMPTY;
 	imageDirty[0] = imageDirty[1] = false;
 	imageName[0][0] = imageName[1][0] = 0;			// Zero out filenames
+	lastAccessClock = 0;
+	accessSeen = false;
 	nibPrevValid = false;
 	nibLatchPending = false;
 	nibLatchByte = 0;
 	nibLatchAge = 0;
+}
+
+bool FloppyDrive::RecentlyAccessed(uint64_t window) const
+{
+	return accessSeen && ((mainCPU.clock - lastAccessClock) < window);
 }
 
 FloppyDrive::~FloppyDrive()
@@ -978,27 +985,33 @@ If it ever *does* become a problem, doing the physical modeling of the head movi
 	};
 
 	// Sanity check
-	if (diskType[activeDrive] == DT_EMPTY)
+	if (diskType[activeDrive] == DT_EMPTY) {
 		return;
+	}
+
+	lastAccessClock = mainCPU.clock;
+	accessSeen = true;
 
 	// Convert phase solenoid number into a bit from 1 through 8 [1, 2, 4, 8]:
 	uint8_t phaseBit = 1 << ((addr >> 1) & 0x03);
 
 	// Set the state of the phase solenoid accessed using the phase bit
-	if (addr & 0x01)
+	if (addr & 0x01) {
 		phase[activeDrive] |= phaseBit;
-	else
+	} else {
 		phase[activeDrive] &= ~phaseBit;
+	}
 
 	int16_t oldHeadPos = headPos[activeDrive];
 	int16_t newStep = step[phase[activeDrive]][oldHeadPos & 0x07];
 	int16_t newHeadPos = (int16_t)headPos[activeDrive] + newStep;
-WriteLog("\nFLOPPY: oldHeadPos=%u, newHeadPos=%i, newStep=%i\n", oldHeadPos, newHeadPos, newStep);
+//WriteLog("\nFLOPPY: oldHeadPos=%u, newHeadPos=%i, newStep=%i\n", oldHeadPos, newHeadPos, newStep);
 
 	// Sanity check
 	// N.B.: This is wrong for 3.5" disks
-	if ((newHeadPos >= 0) && (newHeadPos <= 140))
+	if ((newHeadPos >= 0) && (newHeadPos <= 140)) {
 		headPos[activeDrive] = (uint8_t)newHeadPos;
+	}
 
 	if (oldHeadPos != headPos[activeDrive])
 	{
@@ -1010,25 +1023,24 @@ WriteLog("\nFLOPPY: oldHeadPos=%u, newHeadPos=%i, newStep=%i\n", oldHeadPos, new
 		uint8_t oldTIdx = woz.tmap[oldHeadPos];
 		float oldBitLen = (oldTIdx == 0xFF
 			? 51200.0f : Uint16LE(woz.track[oldTIdx].bitCount));
-WriteLog("FLOPPY: Current pos pre: %u, ", currentPos[activeDrive]);
+//WriteLog("FLOPPY: Current pos pre: %u, ", currentPos[activeDrive]);
 		currentPos[activeDrive] = (uint32_t)((float)currentPos[activeDrive] * (newBitLen / oldBitLen));
-WriteLog("post: %u; newBitLen/old = %.1f/%.1f\n", currentPos[activeDrive], newBitLen, oldBitLen);
+//WriteLog("post: %u; newBitLen/old = %.1f/%.1f\n", currentPos[activeDrive], newBitLen, oldBitLen);
 
 		if (diskType[activeDrive] != DT_NYBBLE)
 		{
 			trackLength[activeDrive] = (uint16_t)newBitLen;
 		}
 //		SpawnMessage("Stepping to track %u...", headPos[activeDrive] >> 2);
-		SpawnMessage("Loading...");
 	}
 
-// only check the time since the phase was first set ON
-if (addr & 0x01)
-{
-	stepperTime = mainCPU.clock;
-	seenReadSinceStep = false;
-}
-WriteLog("FLOPPY: Stepper phase %d set to %s [%c%c%c%c] (track=%2.2f) [%u]\n", (addr >> 1) & 0x03, (addr & 0x01 ? "ON " : "off"), (phase[activeDrive] & 0x08 ? '|' : '.'), (phase[activeDrive] & 0x04 ? '|' : '.'), (phase[activeDrive] & 0x02 ? '|' : '.'), (phase[activeDrive] & 0x01 ? '|' : '.'), (float)headPos[activeDrive] / 4.0f, mainCPU.clock & 0xFFFFFFFF);
+	// only check the time since the phase was first set ON
+	if (addr & 0x01)
+	{
+		stepperTime = mainCPU.clock;
+		seenReadSinceStep = false;
+	}
+//WriteLog("FLOPPY: Stepper phase %d set to %s [%c%c%c%c] (track=%2.2f) [%u]\n", (addr >> 1) & 0x03, (addr & 0x01 ? "ON " : "off"), (phase[activeDrive] & 0x08 ? '|' : '.'), (phase[activeDrive] & 0x04 ? '|' : '.'), (phase[activeDrive] & 0x02 ? '|' : '.'), (phase[activeDrive] & 0x01 ? '|' : '.'), (float)headPos[activeDrive] / 4.0f, mainCPU.clock & 0xFFFFFFFF);
 }
 
 void FloppyDrive::ControlMotor(uint8_t addr)
@@ -1036,22 +1048,21 @@ void FloppyDrive::ControlMotor(uint8_t addr)
 	// $C0E8 - 9
 	motorOn = addr;
 
-	if (motorOn)
-	{
+	if (motorOn) {
 		readPulse = 0;
 		nibLatchPending = false;
 	} else {
 		driveOffTimeout = 2000000;
 	}
 
-WriteLog("FLOPPY: Turning drive motor %s\n", (motorOn ? "ON" : "off"));
+//WriteLog("FLOPPY: Turning drive motor %s\n", (motorOn ? "ON" : "off"));
 }
 
 void FloppyDrive::DriveEnable(uint8_t addr)
 {
 	// $C0EA - B
 	activeDrive = addr;
-WriteLog("FLOPPY: Selecting drive #%hhd\n", addr + 1);
+//WriteLog("FLOPPY: Selecting drive #%hhd\n", addr + 1);
 }
 
 /*
@@ -1087,24 +1098,16 @@ uint8_t FloppyDrive::DataRegister(void)
 	// Sanity check
 	if (diskImageReady && (diskType[activeDrive] != DT_EMPTY))
 	{
-		WOZ2 & woz = *((WOZ2 *)disk[activeDrive]);
-		uint8_t tIdx = woz.tmap[headPos[activeDrive]];
-		uint32_t bitLen = (tIdx == 0xFF ? 51200 : Uint16LE(woz.track[tIdx].bitCount));
-		if (diskType[activeDrive] == DT_NYBBLE)
-		{
-			bitLen = trackLength[activeDrive];
-		}
+		lastAccessClock = mainCPU.clock;
+		accessSeen = true;
 //		SpawnMessage("%u:Reading $%02X from track %u, sector %u...",
 //			activeDrive, dataRegister, headPos[activeDrive] >> 2, (uint32_t)(((float)currentPos[activeDrive] / (float)bitLen) * 16.0f));
-		SpawnMessage("Loading...");
 		ioMode = IO_MODE_READ;
 		ioHappened = true;
 
 		if ((seenReadSinceStep == false) && (slSwitch == false) && (rwSwitch == false) && ((iorAddr & 0x0F) == 0x0C))
 		{
 			seenReadSinceStep = true;
-			WriteLog("%u:Reading $%02X from track %2.2f, sector %u (delta since seek: %lu cycles) [%u]...\n",
-				activeDrive, dataRegister, (float)headPos[activeDrive] / 4.0f, (uint32_t)(((float)currentPos[activeDrive] / (float)bitLen) * 16.0f), mainCPU.clock - stepperTime, mainCPU.clock & 0xFFFFFFFF);
 		}
 	}
 
@@ -1136,6 +1139,8 @@ void FloppyDrive::DataRegister(uint8_t data)
 	cpuDataBus = data;
 	ioMode = IO_MODE_WRITE;
 	ioHappened = true;
+	lastAccessClock = mainCPU.clock;
+	accessSeen = true;
 }
 
 /*
@@ -1268,7 +1273,9 @@ if (logSeq)
 
 	while (cyclesToRun-- > 0)
 	{
-		pulseClock = (pulseClock + 1) % pulseTiming;
+		if (++pulseClock >= pulseTiming) {
+			pulseClock = 0;
+		}
 
 		if (pulseClock == 0)
 		{
@@ -1296,7 +1303,9 @@ if (logSeq)
 			// NIB stores the encoded track bits directly, but must still pass
 			// through the same read-head delay and logic-state sequencer.
 			readPulse = (window >> 1) & 0x01; // Read pulse delayed by about 5µs
-			currentPos[activeDrive] = (currentPos[activeDrive] + 1) % (uint16_t)trackLength[activeDrive];
+			if (++currentPos[activeDrive] >= trackLength[activeDrive]) {
+				currentPos[activeDrive] = 0;
+			}
 
 			// If we hit more than 2 zero bits in a row, simulate the disk head
 			// reader's Automatic Gain Control (AGC) turning itself up too high
@@ -1324,9 +1333,10 @@ N.B.: Had to up this to 3 because Up N' Down had some weird sync bytes (FE10).  
 		uint8_t nextState = (sequencerState & 0xF0) | (rwSwitch << 3)
 			| (slSwitch << 2) | (readPulse ? 0x02 : 0)
 			| ((dataRegister & 0x80) >> 7);
-if (logSeq)
+if (logSeq) {
 	WriteLog("[%02X:%02X]%s", sequencerState, nextState, (chop == 15 ? "\n" : ""));
-chop = (chop + 1) % 20;
+	chop = (chop + 1) % 20;
+}
 #ifndef TEST13
 		sequencerState = sequencerROM[nextState];
 #else

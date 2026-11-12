@@ -22,6 +22,23 @@
 
 MOCKINGBOARD mb[2];
 
+// Recent Mockingboard register activity keeps disk turbo off (so music keeps
+// its tempo).  An idle board does not hold turbo back.
+static uint64_t lastMBActivityCycle = 0;
+static bool mbActivitySeen = false;
+static const uint64_t MB_ACTIVITY_TIMEOUT = 102048;	// 0.1 seconds at 1.0204832 MHz
+
+static void NoteMBActivity(void)
+{
+	lastMBActivityCycle = mainCPU.clock;
+	mbActivitySeen = true;
+}
+
+bool MBIsActive(void)
+{
+	return mbActivitySeen && ((mainCPU.clock - lastMBActivityCycle) < MB_ACTIVITY_TIMEOUT);
+}
+
 
 void MBReset(void)
 {
@@ -34,6 +51,7 @@ void MBReset(void)
 
 void MBWrite(int chipNum, uint8_t reg, uint8_t byte)
 {
+	NoteMBActivity();
 	V6522VIA * chip1 = &mb[0].via[chipNum];
 	chip1->Write(reg, byte);
 
@@ -46,6 +64,7 @@ void MBWrite(int chipNum, uint8_t reg, uint8_t byte)
 
 uint8_t MBRead(int chipNum, uint8_t reg)
 {
+	NoteMBActivity();
 	return mb[0].via[chipNum].Read(reg);
 }
 

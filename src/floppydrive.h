@@ -55,6 +55,13 @@ class FloppyDrive
 	public:
 		void ControlStepper(uint8_t addr);
 		void ControlMotor(uint8_t addr);
+
+		bool IsMotorOn(void) const { return motorOn != 0; }
+		// Disk turbo support: is there an image in the active drive, and has the
+		// CPU touched the disk (data register or head stepper) within 'window' cycles?
+		bool HasDisk(void) const { return diskImageReady && (diskType[activeDrive] != DT_EMPTY); }
+		bool RecentlyAccessed(uint64_t window) const;
+
 		void DriveEnable(uint8_t addr);
 		void SetShiftLoadSwitch(uint8_t state);
 		void SetReadWriteSwitch(uint8_t state);
@@ -83,6 +90,9 @@ class FloppyDrive
 		uint8_t headPos[2];
 		bool ioHappened;
 		bool diskImageReady;
+
+		uint64_t lastAccessClock;	// CPU clock of the last disk data/stepper access
+		bool accessSeen;
 
 		uint32_t currentPos[2];
 

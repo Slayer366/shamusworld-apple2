@@ -134,7 +134,11 @@ static void BlinkTimer(void);
 static SDL_Thread * cpuThread = NULL;
 static SDL_cond * cpuCond = NULL;
 static SDL_sem * mainSem = NULL;
-static bool cpuFinished = false;
+static SDL_mutex * cpuMutex = NULL;			// Guards the CPU thread's wait on cpuCond
+static volatile bool cpuFinished = false;
+static volatile bool cpuExited = false;		// Set by the CPU thread as it leaves
+static volatile bool cpuInterrupt = false;	// Main thread asks the CPU thread to leave turbo and park
+static bool turboFrame = false;				// CPU thread only: the frame being run is a disk-turbo frame
 
 static CustMouse custMouse;
 
@@ -150,11 +154,91 @@ static CustMouse custMouse;
 //
 static uint32_t sampleCount;
 static uint64_t sampleClock, lastSampleClock;
+
+// Wake the CPU thread.  Signalling while holding the mutex means the wake-up
+// can't slip in between the CPU thread deciding to wait and actually waiting.
+static void SignalCPUThread(void)
+{
+	SDL_mutexP(cpuMutex);
+	SDL_CondSignal(cpuCond);
+	SDL_mutexV(cpuMutex);
+}
+
+// Disk turbo ("enhanced disk speed"): while the floppy is being read or
+// written, run the emulation faster than real time.  Emulated time is
+// unchanged, so the disk timing the software sees is the same; it just
+// arrives sooner on the wall clock.  "The drive motor is on" is what
+// counts, so the CPU-bound work a loader does between disk reads
+// (decompression, relocation...) is sped up too.
+enum
+{
+	TB_NONE = 0,		// Turbo allowed
+	TB_DISABLED,		// Turned off in the settings
+	TB_MOTOR_OFF,
+	TB_NO_DISK,			// Nothing in the drive to speed up
+	TB_SPEAKER,
+	TB_MOCKINGBOARD,
+	TB_INTERRUPTED,		// main() wants the CPU thread to park
+	TB_COUNT
+};
+
+static const char * turboBlockerName[TB_COUNT] = {
+	"allowed",
+	"disabled in settings",
+	"drive motor off",
+	"no disk in drive",
+	"speaker active",
+	"Mockingboard active",
+	"interrupted"
+};
+
+static int DiskTurboBlocker(void)
+{
+	if (!settings.enhancedDiskSpeed) {
+		return TB_DISABLED;
+	}
+
+	// The hard disk card's firmware times out on every empty SCSI ID when it
+	// boots (about 3.5 seconds of pure polling); there's nothing to wait for.
+	if (HardDriveIsWaiting()) {
+		return TB_NONE;
+	}
+
+	if (!floppyDrive[0].IsMotorOn() && !floppyDrive[0].RecentlyAccessed(255121ULL)) {
+		return TB_MOTOR_OFF;
+	}
+
+	// An empty drive spins forever waiting for a disk; there's nothing to speed up.
+	if (!floppyDrive[0].HasDisk()) {
+		return TB_NO_DISK;
+	}
+
+	if (SpeakerIsActive()) {
+		return TB_SPEAKER;
+	}
+
+	if (MBIsActive()) {
+		return TB_MOCKINGBOARD;
+	}
+
+	return TB_NONE;
+}
+
 int CPUThreadFunc(void * data)
 {
-	// Mutex must be locked for conditional to work...
-	// Also, must be created in the thread that uses it...
-	SDL_mutex * cpuMutex = SDL_CreateMutex();
+	bool haveToken = false;				// True while we hold mainSem across turbo frames
+	bool turboWasOn = false;
+	uint64_t turboStartClock = 0;
+	uint64_t turboStartTicks = 0;
+	uint32_t turboLogCount = 0;
+
+	// Once a second (of wall time) while the drive motor is on, log what the
+	// turbo decision was for each frame, and how fast we actually ran.
+	uint32_t statFrames[TB_COUNT] = { 0 };
+	uint32_t statLines = 0;
+	uint64_t statStartTicks = SDL_GetPerformanceCounter();
+	uint64_t statStartClock = mainCPU.clock;
+	bool statMotorSeen = false;
 
 #ifdef CPU_THREAD_OVERFLOW_COMPENSATION
 //	float overflow = 0.0;
@@ -170,7 +254,13 @@ sampleClock = lastSampleClock = mainCPU.clock;
 #ifdef THREAD_DEBUGGING
 WriteLog("CPU: SDL_SemWait(mainSem);\n");
 #endif
-		SDL_SemWait(mainSem);
+		// During turbo we keep holding the token from frame to frame, so main()
+		// can't think we're parked when we aren't.
+		if (!haveToken)
+		{
+			SDL_SemWait(mainSem);
+			haveToken = true;
+		}
 
 		// There are exactly 800 slices of 21.333 cycles per frame, so it works
 		// out evenly.
@@ -254,14 +344,87 @@ VC, from line 0-5 and 198-261 is the VBL interval, with vertical retrace occurin
 
 */
 
+		// Decide whether the NEXT frame runs in disk turbo.  main() can force us
+		// out of it (cpuInterrupt) before it freezes or stops the CPU thread.
+		int blocker = DiskTurboBlocker();
+
+		if ((blocker == TB_NONE) && (cpuInterrupt || cpuFinished)) {
+			blocker = TB_INTERRUPTED;
+		}
+
+		bool turboNext = (blocker == TB_NONE);
+
+		statFrames[blocker]++;
+
+		if (blocker != TB_DISABLED && blocker != TB_MOTOR_OFF) {
+			statMotorSeen = true;
+		}
+
+		if ((SDL_GetPerformanceCounter() - statStartTicks) >= SDL_GetPerformanceFrequency())
+		{
+			if (statMotorSeen && (statLines < 300))
+			{
+				statLines++;
+
+				double seconds = (double)(SDL_GetPerformanceCounter() - statStartTicks) / (double)SDL_GetPerformanceFrequency();
+				double emulated = (double)(mainCPU.clock - statStartClock) / 1020484.32;
+				char line[256];
+				int len = snprintf(line, sizeof(line), "Turbo stats: %.2fx real time; frames:", (seconds > 0 ? emulated / seconds : 0.0));
+
+				for(int i=0; i<TB_COUNT; i++) {
+					if (statFrames[i] && (len < (int)sizeof(line) - 40)) {
+						len += snprintf(line + len, sizeof(line) - len, " %s=%u", turboBlockerName[i], statFrames[i]);
+					}
+				}
+
+				WriteLog("%s\n", line);
+			}
+
+			for(int i=0; i<TB_COUNT; i++) {
+				statFrames[i] = 0;
+			}
+
+			statMotorSeen = false;
+			statStartTicks = SDL_GetPerformanceCounter();
+			statStartClock = mainCPU.clock;
+		}
+
+		if (turboNext != turboWasOn)
+		{
+			if (turboLogCount < 200)
+			{
+				turboLogCount++;
+
+				if (turboNext) {
+					WriteLog("Turbo: ON  (clock %llu)\n", (unsigned long long)mainCPU.clock);
+				} else {
+					double seconds = (double)(SDL_GetPerformanceCounter() - turboStartTicks) / (double)SDL_GetPerformanceFrequency();
+					double emulated = (double)(mainCPU.clock - turboStartClock) / 1020484.32;
+					WriteLog("Turbo: OFF (%s) after %.2f s emulated in %.2f s real = %.1fx\n",
+						turboBlockerName[blocker], emulated, seconds, (seconds > 0 ? emulated / seconds : 0.0));
+				}
+			}
+
+			turboStartClock = mainCPU.clock;
+			turboStartTicks = SDL_GetPerformanceCounter();
+			turboWasOn = turboNext;
+		}
+
+		turboFrame = turboNext;
+
+		if (turboNext) {
+			continue;				// Straight into the next frame, still holding the token
+		}
+
+		// Normal path: hand the token back and sleep until the next frame tick.
+		// (The mutex is locked before the post so main()'s signal, which is also
+		// sent under the mutex, can't be lost between the post and the wait.)
+
 #ifdef THREAD_DEBUGGING
 WriteLog("CPU: SDL_mutexP(cpuMutex);\n");
 #endif
 		SDL_mutexP(cpuMutex);
-		// increment mainSem...
-#ifdef THREAD_DEBUGGING
-WriteLog("CPU: SDL_SemPost(mainSem);\n");
-#endif
+		haveToken = false;
 		SDL_SemPost(mainSem);
 #ifdef THREAD_DEBUGGING
 WriteLog("CPU: SDL_CondWait(cpuCond, cpuMutex);\n");
@@ -275,7 +438,13 @@ WriteLog("CPU: SDL_mutexV(cpuMutex);\n");
 	}
 	while (!cpuFinished);
 
-	SDL_DestroyMutex(cpuMutex);
+	// If we were asked to quit in the middle of a turbo run we're still holding
+	// the token; give it back so nothing is left waiting on it.
+	if (haveToken) {
+		SDL_SemPost(mainSem);
+	}
+
+	cpuExited = true;
 
 	return 0;
 }
@@ -472,8 +641,8 @@ static void AppleTimer(uint16_t cycles)
         sampleCount++;
         lastSampleClock = sampleClock;
         #endif
-		       WriteSampleToBuffer();
-		       cyclesForSample -= 21.26009;
+			WriteSampleToBuffer(turboFrame);
+			cyclesForSample -= 21.26009;
 	}
 #endif
 }
@@ -712,6 +881,7 @@ So we need to decouple the CPU thread from the host video thread, and have the C
 #ifdef THREADED_65C02
 	// Kick off the CPU...
 	cpuCond = SDL_CreateCond();
+	cpuMutex = SDL_CreateMutex();
 	mainSem = SDL_CreateSemaphore(1);
 	cpuThread = SDL_CreateThread(CPUThreadFunc, NULL, NULL);
 //Hmm... CPU does POST (+1), wait, then WAIT (-1)
@@ -740,19 +910,24 @@ totalCPU += USEC_TO_M6502_CYCLES(timeToNextEvent);
 WriteLog("Main: cpuFinished = true;\n");
 	cpuFinished = true;
 
-WriteLog("Main: SDL_SemWait(mainSem);\n");
-	// Only do this if NOT in power off/emulation paused mode!
-	if (!pauseMode)
-		// Should lock until CPU thread is waiting...
-		SDL_SemWait(mainSem);
+	// The CPU thread may be waiting for the frame tick, for the semaphore token
+	// (if we're powered off), or be in the middle of a frame/turbo run.  A
+	// single signal can be missed if it isn't waiting yet, so keep releasing
+	// both until it has really left.
+WriteLog("Main: releasing CPU thread...\n");
+	while (!cpuExited)
+	{
+		SDL_SemPost(mainSem);
+		SignalCPUThread();
+		SDL_Delay(1);
+	}
 #endif
 
-WriteLog("Main: SDL_CondSignal(cpuCond);\n");
-	SDL_CondSignal(cpuCond);//thread is probably asleep, so wake it up
 WriteLog("Main: SDL_WaitThread(cpuThread, NULL);\n");
 	SDL_WaitThread(cpuThread, NULL);
 WriteLog("Main: SDL_DestroyCond(cpuCond);\n");
 	SDL_DestroyCond(cpuCond);
+	SDL_DestroyMutex(cpuMutex);
 	SDL_DestroySemaphore(mainSem);
 
 	// Autosave state here, if requested...
@@ -1174,8 +1349,12 @@ static void FrameCallback(void)
 		else
 		{
 			pauseMode = true;
+			// Make the CPU thread leave disk turbo and park at the end of its
+			// frame; the semaphore is only handed back once it's really stopped.
+			cpuInterrupt = true;
 			// Should lock until CPU thread is waiting...
 			SDL_SemWait(mainSem);
+			cpuInterrupt = false;
 			ResetApple2State();
 		}
 
@@ -1244,7 +1423,7 @@ if (counter == 60)
 //works longer, but then still falls behind... [FIXED, see above]
 #ifdef THREADED_65C02
 	if (!pauseMode)
-		SDL_CondSignal(cpuCond);//OK, let the CPU go another frame...
+		SignalCPUThread();//OK, let the CPU go another frame...
 #endif
 }
 

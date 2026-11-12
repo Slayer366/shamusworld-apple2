@@ -21,6 +21,7 @@
 //
 
 #include "sound.h"
+#include "apple2.h"
 
 #include <string.h>			// For memset, memcpy
 #include <SDL2/SDL.h>
@@ -171,12 +172,25 @@ lastStarve = sndFrmCnt;
 //
 // This is called by the main CPU thread every ~21.666 cycles.
 //
-void WriteSampleToBuffer(void)
+
+// Speaker activity is tracked (in emulated CPU cycles) so disk turbo can stay
+// off while a program is making noise.
+static uint64_t lastSpeakerActivityCycle = 0;
+static bool speakerActivitySeen = false;
+static const uint64_t SPEAKER_ACTIVITY_TIMEOUT = 204097;	// 0.2 seconds at 1.0204832 MHz
+
+// If 'discardOutput' is true (disk turbo), the AY generators are still stepped
+// so they stay in sync, but nothing is queued: samples made faster than real
+// time would only overflow the audio buffer.
+void WriteSampleToBuffer(bool discardOutput)
 {
 //	uint16_t s1 = AYGetSample(0);
 //	uint16_t s2 = AYGetSample(1);
 	uint16_t s1 = mb[0].ay[0].GetSample();
 	uint16_t s2 = mb[0].ay[1].GetSample();
+
+	if (discardOutput)
+		return;
 
 	// This should almost never happen, but, if it does...
 	while (soundBufferPos >= (SOUND_BUFFER_SIZE - 1))
@@ -191,8 +205,17 @@ void WriteSampleToBuffer(void)
 }
 
 
+bool SpeakerIsActive(void)
+{
+	return speakerActivitySeen && ((mainCPU.clock - lastSpeakerActivityCycle) < SPEAKER_ACTIVITY_TIMEOUT);
+}
+
+
 void ToggleSpeaker(void)
 {
+	lastSpeakerActivityCycle = mainCPU.clock;
+	speakerActivitySeen = true;
+
 	if (!soundInitialized)
 		return;
 

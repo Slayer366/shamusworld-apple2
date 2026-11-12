@@ -83,9 +83,8 @@ GCC_DEPS   = -MMD
 #		-ffast-math `sdl2-config --cflags` -pg -g
 #		-fomit-frame-pointer `sdl2-config --cflags` -g
 #		-fomit-frame-pointer `sdl2-config --cflags` -DLOG_UNMAPPED_MEMORY_ACCESSES
-CFLAGS   = $(GCC_DEPS) -O2 -Wall -Wno-switch $(DEFINES) -ffast-math $(SDL_CFLAGS) -pg -g
-CPPFLAGS = $(GCC_DEPS) -O2 -Wall -Wno-switch -Wno-non-virtual-dtor $(DEFINES) \
-		-ffast-math $(SDL_CFLAGS) -pg -g
+CFLAGS   = $(GCC_DEPS) -O3 -Wall -Wno-switch $(DEFINES) -ffast-math $(SDL_CFLAGS) -g
+CPPFLAGS = $(GCC_DEPS) -O3 -Wall -Wno-switch -Wno-non-virtual-dtor $(DEFINES) -ffast-math $(SDL_CFLAGS) -g
 
 LDFLAGS = $(EXTRA)
 
@@ -95,7 +94,7 @@ LDFLAGS = $(EXTRA)
 # Link in the gprof lib
 #LIBS = -L/usr/local/lib -L/usr/lib `sdl2-config $(SDLLIBTYPE)` -lstdc++ -lz $(GLLIB) -pg
 #LIBS = -L/usr/local/lib -L/usr/lib $(SDL_LIBS) -lstdc++ -lz $(GLLIB) -pg
-LIBS = $(SDL_LIBS) -lstdc++ -lz -lm $(GLLIB) -pg
+LIBS = $(SDL_LIBS) -lstdc++ -lz -lm $(GLLIB)
 
 #INCS = -I. -I./src -I/usr/local/include -I/usr/include
 INCS = -I. -I./src
