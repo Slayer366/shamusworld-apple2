@@ -19,8 +19,8 @@
 
 //#define C_WIDTH	402
 //#define C_HEIGHT	322
-#define C_WIDTH		540
-#define C_HEIGHT	376
+#define C_WIDTH		400
+#define C_HEIGHT	300
 #define C_XPOS		((VIRTUAL_SCREEN_WIDTH - C_WIDTH) / 2)
 #define C_YPOS		((VIRTUAL_SCREEN_HEIGHT - C_HEIGHT) / 2)
 
@@ -36,18 +36,18 @@ static bool dragging = false;
 static bool entered = false;
 static bool refresh = false;
 //static bool cb1Checked = false;
-static bool cb2Checked = false;
+//static bool cb2Checked = false;
 //static bool cb3Checked = false;
-static bool cb4Checked = false;
-static bool cbnChecked = false;
-static char le1[512] = { 0 };
+//static bool cb4Checked = false;
+//static bool cbnChecked = false;
+//static char le1[512] = { 0 };
 
 static const char cb1Text[] = "Automatically save state on exit";
-static const char cb2Text[] = "Enable hard drive";
+//static const char cb2Text[] = "Enable hard drive";
 static const char cb3Text[] = "Run Apple2 in full screen mode";
-static const char cb4Text[] = "Automatically switch to Apple ][ mode for games that require it";
-static const char cbnText[] = "Don't check this box";
-static const char le1Text[] = "HD1 location:";
+//static const char cb4Text[] = "Automatically switch to Apple ][ mode for games that require it";
+//static const char cbnText[] = "Don't check this box";
+//static const char le1Text[] = "HD1 location:";
 
 static const char cbChecked[(9 * 11) + 1] =
 	"       @@"
@@ -196,13 +196,13 @@ void Config::Init(SDL_Renderer * renderer)
 	SDL_SetRenderTarget(renderer, NULL);
 
 	objList.push_back(new CheckBox(1, 1, &settings.autoStateSaving, cb1Text));
-	objList.push_back(new CheckBox(1, 2, &cb2Checked, cb2Text));
+//	objList.push_back(new CheckBox(1, 2, &cb2Checked, cb2Text));
 	objList.push_back(new CheckBox(1, 3, &settings.fullscreen, cb3Text));
-	objList.push_back(new CheckBox(1, 4, &cb4Checked, cb4Text));
+//	objList.push_back(new CheckBox(1, 4, &cb4Checked, cb4Text));
 
-	objList.push_back(new CheckBox(1, 27, &cbnChecked, cbnText));
+//	objList.push_back(new CheckBox(1, 27, &cbnChecked, cbnText));
 
-	objList.push_back(new LineEdit(1, 6, le1, 48, le1Text));
+//	objList.push_back(new LineEdit(1, 6, le1, 48, le1Text));
 	objList.push_back(new Draggable(1 * FONT_WIDTH, 8 * FONT_HEIGHT, 96, FONT_HEIGHT, &settings.cardSlot[0], cardTex[0]));
 	objList.push_back(new Draggable(1 * FONT_WIDTH, 9 * FONT_HEIGHT, 96, FONT_HEIGHT, &settings.cardSlot[1], cardTex[0]));
 	objList.push_back(new Draggable(1 * FONT_WIDTH, 10 * FONT_HEIGHT, 96, FONT_HEIGHT, &settings.cardSlot[2], cardTex[1]));
