@@ -258,9 +258,10 @@ void DiskSelector::ReadManifest(FILE * fp, DiskSet * ds)
 	int disksFound = 0;
 	int lineNo = 0;
 
-	while (!feof(fp))
+//	while (!feof(fp))
+	while (fgets(line, sizeof(line), fp) != NULL)
 	{
-		fgets(line, 0x10000, fp);
+//		fgets(line, 0x10000, fp);
 		lineNo++;
 
 		if ((line[0] == '#') || (line[0] == '\n'))
@@ -359,6 +360,7 @@ bool DiskSelector::HasLegalExtension(const char * name)
 		|| (strcasecmp(ext, ".do") == 0)
 		|| (strcasecmp(ext, ".po") == 0)
 		|| (strcasecmp(ext, ".woz") == 0)
+		|| (strcasecmp(ext, ".bin") == 0)
 		|| (strcasecmp(ext, ".nib") == 0)
 		|| (strcasecmp(ext, ".nb2") == 0)
 		|| (strcasecmp(ext, ".2mg") == 0)
@@ -410,6 +412,7 @@ void DiskSelector::FindHardDisks(const char * path)
 
 			if ((ext != NULL)
 				&& ((strcasecmp(ext, ".2mg") == 0)
+					|| (strcasecmp(ext, ".2img") == 0)
 					|| (strcasecmp(ext, ".hdv") == 0)))
 			{
 				FileStruct fs;
