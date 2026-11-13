@@ -9,15 +9,18 @@
 #include "config.h"
 #include <vector>
 #include "elements.h"
-#include "font10pt.h"
+//#include "font10pt.h"
+#include "font13pt.h"
 #include "gui.h"
 #include "log.h"
 #include "settings.h"
 #include "video.h"
 
 
-#define C_WIDTH		402
-#define C_HEIGHT	322
+//#define C_WIDTH	402
+//#define C_HEIGHT	322
+#define C_WIDTH		540
+#define C_HEIGHT	376
 #define C_XPOS		((VIRTUAL_SCREEN_WIDTH - C_WIDTH) / 2)
 #define C_YPOS		((VIRTUAL_SCREEN_HEIGHT - C_HEIGHT) / 2)
 
@@ -139,13 +142,14 @@ void Config::Init(SDL_Renderer * renderer)
 		return;
 	}
 
-	if (SDL_SetTextureBlendMode(window, SDL_BLENDMODE_BLEND) == -1)
+	if (SDL_SetTextureBlendMode(window, SDL_BLENDMODE_BLEND) == -1) {
 		WriteLog("GUI (Config): Could not set blend mode for window.\n");
+	}
 
 	for(int t=0; t<3; t++)
 	{
 		cardTex[t] = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
-			SDL_TEXTUREACCESS_TARGET, 96, 11);
+			SDL_TEXTUREACCESS_TARGET, 96, FONT_HEIGHT);
 		SDL_SetTextureBlendMode(cardTex[t], SDL_BLENDMODE_BLEND);
 
 		SDL_SetRenderTarget(renderer, cardTex[t]);
@@ -154,31 +158,39 @@ void Config::Init(SDL_Renderer * renderer)
 
 		SDL_SetRenderDrawColor(renderer, 0x00, 0xAA, 0x00, 0xFF);
 
-		for(int j=3; j<8; j++)
+//		for(int j=3; j<8; j++)
+		for(int j=3; j<FONT_HEIGHT - 3; j++)
 			for(int i=0; i<96; i++)
 				SDL_RenderDrawPoint(renderer, i, j);
 	}
 
 	SDL_SetRenderTarget(renderer, cardTex[0]);
-	GUI::DrawString(renderer, 4, 0, "Disk ][");
+//	GUI::DrawString(renderer, 4, 0, "Disk ][");
+	GUI::DrawString(renderer, (12 - (int)strlen("Disk ][")) / 2, 0, "Disk ][");
 	SDL_SetRenderTarget(renderer, cardTex[1]);
-	GUI::DrawString(renderer, 2, 0, "Mockingboard");
+//	GUI::DrawString(renderer, 2, 0, "Mockingboard");
+	GUI::DrawString(renderer, (12 - (int)strlen("Mockingboard")) / 2, 0, "Mockingboard");
 	SDL_SetRenderTarget(renderer, cardTex[2]);
-	GUI::DrawString(renderer, 6, 0, "SCSI");
+//	GUI::DrawString(renderer, 6, 0, "SCSI");
+	GUI::DrawString(renderer, (12 - (int)strlen("SCSI")) / 2, 0, "SCSI");
 
-	cardBay = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, 123, 99);
+//	cardBay = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, 123, 99);
+	cardBay = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, 134, 110);
 	SDL_SetTextureBlendMode(cardBay, SDL_BLENDMODE_BLEND);
 	SDL_SetRenderTarget(renderer, cardBay);
 	SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0x00);
 	SDL_RenderClear(renderer);
 
-	GUI::DrawBox(renderer, 5, 5, 118, 88, 0xFF, 0xFF, 0xFF);
+//	GUI::DrawBox(renderer, 5, 5, 118, 88, 0xFF, 0xFF, 0xFF);
+	GUI::DrawBox(renderer, 5, 5, 129, 100, 0xFF, 0xFF, 0xFF);
 	GUI::DrawStringVert(renderer, 5, 33 + 21, " SLOTS ");
 
 	for(int t=0; t<7; t++)
 	{
-		GUI::DrawBox(renderer, FONT_WIDTH * 2, (FONT_HEIGHT * (t + 1)) + 3, 96, 5, 0xFF, 0xFF, 0xFF);
-		GUI::DrawCharArray(renderer, slotNum[t], 112, (FONT_HEIGHT * (t + 1)) + 3, 5, 5, 0xFF, 0xFF, 0xFF);
+//		GUI::DrawBox(renderer, FONT_WIDTH * 2, (FONT_HEIGHT * (t + 1)) + 3, 96, 5, 0xFF, 0xFF, 0xFF);
+//		GUI::DrawCharArray(renderer, slotNum[t], 112, (FONT_HEIGHT * (t + 1)) + 3, 5, 5, 0xFF, 0xFF, 0xFF);
+		GUI::DrawBox(renderer, (FONT_WIDTH * 3) - 4, (FONT_HEIGHT * (t + 1)) + 3, 96, 5, 0xFF, 0xFF, 0xFF);
+		GUI::DrawCharArray(renderer, slotNum[t], 120, (FONT_HEIGHT * (t + 1)) + 3, 5, 5, 0xFF, 0xFF, 0xFF);
 	}
 
 	SDL_SetRenderTarget(renderer, NULL);
@@ -191,11 +203,11 @@ void Config::Init(SDL_Renderer * renderer)
 	objList.push_back(new CheckBox(1, 27, &cbnChecked, cbnText));
 
 	objList.push_back(new LineEdit(1, 6, le1, 48, le1Text));
-	objList.push_back(new Draggable(1 * FONT_WIDTH, 8 * FONT_HEIGHT, 96, 11, &settings.cardSlot[0], cardTex[0]));
-	objList.push_back(new Draggable(1 * FONT_WIDTH, 9 * FONT_HEIGHT, 96, 11, &settings.cardSlot[1], cardTex[0]));
-	objList.push_back(new Draggable(1 * FONT_WIDTH, 10 * FONT_HEIGHT, 96, 11, &settings.cardSlot[2], cardTex[1]));
-	objList.push_back(new Draggable(1 * FONT_WIDTH, 11 * FONT_HEIGHT, 96, 11, &settings.cardSlot[3], cardTex[1]));
-	objList.push_back(new Draggable(1 * FONT_WIDTH, 12 * FONT_HEIGHT, 96, 11, &settings.cardSlot[4], cardTex[2]));
+	objList.push_back(new Draggable(1 * FONT_WIDTH, 8 * FONT_HEIGHT, 96, FONT_HEIGHT, &settings.cardSlot[0], cardTex[0]));
+	objList.push_back(new Draggable(1 * FONT_WIDTH, 9 * FONT_HEIGHT, 96, FONT_HEIGHT, &settings.cardSlot[1], cardTex[0]));
+	objList.push_back(new Draggable(1 * FONT_WIDTH, 10 * FONT_HEIGHT, 96, FONT_HEIGHT, &settings.cardSlot[2], cardTex[1]));
+	objList.push_back(new Draggable(1 * FONT_WIDTH, 11 * FONT_HEIGHT, 96, FONT_HEIGHT, &settings.cardSlot[3], cardTex[1]));
+	objList.push_back(new Draggable(1 * FONT_WIDTH, 12 * FONT_HEIGHT, 96, FONT_HEIGHT, &settings.cardSlot[4], cardTex[2]));
 }
 
 
@@ -283,12 +295,14 @@ void Config::MouseUp(int32_t x, int32_t y, uint32_t buttons)
 			{
 				d->dragging = false;
 
-				if ((d->r.x > 120) && (d->r.x < 220)
+//				if ((d->r.x > 120) && (d->r.x < 220)
+				if ((d->r.x > 128) && (d->r.x < 228)
 					&& (d->r.y > (8 * FONT_HEIGHT))
 					&& (d->r.y < (15 * FONT_HEIGHT)))
 				{
 					*(d->spot) = ((d->r.y - (8 * FONT_HEIGHT)) / FONT_HEIGHT) + 1;
-					d->r.x = 120;
+//					d->r.x = 120;
+					d->r.x = 128;
 					d->r.y = (7 + *(d->spot)) * FONT_HEIGHT;
 				}
 				else
@@ -349,7 +363,8 @@ void Config::MouseMove(int32_t x, int32_t y, uint32_t buttons)
 			CheckBox * cb = (CheckBox *)obj;
 			bool oldHover = cb->hovered;
 			cb->hovered = (((nx >= ((cb->r.x * FONT_WIDTH) + 1))
-				&& (nx <= ((cb->r.x * FONT_WIDTH) + 6))
+//				&& (nx <= ((cb->r.x * FONT_WIDTH) + 6))
+				&& (nx <= ((cb->r.x * FONT_WIDTH) + 7))
 				&& (ny >= ((cb->r.y * FONT_HEIGHT) + 3))
 				&& (ny <= ((cb->r.y * FONT_HEIGHT) + 8))) ? true : false);
 
@@ -453,7 +468,8 @@ void Config::DrawElements(SDL_Renderer * renderer)
 	SDL_SetRenderDrawColor(renderer, 0x7F, 0x3F, 0x00, 0xEF);
 	SDL_RenderClear(renderer);
 
-	SDL_Rect cbRect = { 108, FONT_HEIGHT * 7, 123, 99 };
+//	SDL_Rect cbRect = { 108, FONT_HEIGHT * 7, 123, 99 };
+	SDL_Rect cbRect = { 108, FONT_HEIGHT * 7, 134, 110 };
 	SDL_RenderCopy(renderer, cardBay, NULL, &cbRect);
 
 	std::vector<void *>::iterator i;

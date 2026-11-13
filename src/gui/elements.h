@@ -3,7 +3,8 @@
 
 #include <SDL2/SDL.h>
 #include <stdint.h>
-#include "font10pt.h"
+//#include "font10pt.h"
+#include "font13pt.h"
 
 enum ObjectType { OTNone = 0, OTCheckBox, OTLineEdit, OTDraggable, OTCount };
 
@@ -53,7 +54,8 @@ struct Draggable {
 
 		if ((s) && (*s != 0))
 		{
-			r.x = 120;
+//			r.x = 120;
+			r.x = 128;
 			r.y = (7 + *(spot)) * FONT_HEIGHT;
 		}
 	}

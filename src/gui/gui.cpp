@@ -27,7 +27,8 @@
 #include "diskselector.h"
 #include "elements.h"
 #include "floppydrive.h"
-#include "font10pt.h"
+//#include "font10pt.h"
+#include "font13pt.h"
 #include "log.h"
 #include "video.h"
 
@@ -131,7 +132,13 @@ bool disk2EjectHovered = false;
 bool disk1NewDiskHovered = false;
 bool disk2NewDiskHovered = false;
 
+// DriveLightStatus() reports and clears the most recent disk I/O indication.
+// Sample it once per sidebar update and use the sampled value when composing
+// the drive icon textures.
+int sidebarDriveLightState[2] = { DLS_OFF, DLS_OFF };
+
 SDL_Texture * GUI::charStamp = NULL;
+static SDL_Texture * glyphAtlas = NULL;
 uint32_t GUI::stamp[FONT_WIDTH * FONT_HEIGHT];
 
 #define SIDEBAR_X_POS  (VIRTUAL_SCREEN_WIDTH - 80)
@@ -167,6 +174,40 @@ void GUI::Init(SDL_Renderer * renderer)
 
 	if (SDL_SetTextureBlendMode(charStamp, SDL_BLENDMODE_BLEND) == -1)
 		WriteLog("GUI: Could not set blend mode for charStamp.\n");
+
+	// Cache both normal and inverted glyphs. Disk-list redraws reuse these
+	// cells instead of uploading a tiny texture for every character.
+	const int glyphCount = 96;
+	const int atlasWidth = glyphCount * FONT_WIDTH;
+	const int atlasHeight = 2 * FONT_HEIGHT;
+	std::vector<uint32_t> atlasPixels(atlasWidth * atlasHeight);
+	for (int c = 0; c < glyphCount; c++)
+	{
+//		uint8_t * glyph = &font10pt[c * FONT_WIDTH * FONT_HEIGHT];
+		uint8_t * glyph = &font13pt[c * FONT_WIDTH * FONT_HEIGHT];
+		for (int y = 0; y < FONT_HEIGHT; y++)
+			for (int x = 0; x < FONT_WIDTH; x++)
+			{
+				uint32_t pixel = 0xFFFFC000 | glyph[y * FONT_WIDTH + x];
+				atlasPixels[y * atlasWidth + c * FONT_WIDTH + x] = pixel;
+				atlasPixels[(y + FONT_HEIGHT) * atlasWidth + c * FONT_WIDTH + x] = pixel ^ 0x000000FF;
+			}
+	}
+	glyphAtlas = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
+		SDL_TEXTUREACCESS_STATIC, atlasWidth, atlasHeight);
+	if (glyphAtlas)
+	{
+		if (SDL_UpdateTexture(glyphAtlas, NULL, atlasPixels.data(), atlasWidth * sizeof(uint32_t)) != 0)
+		{
+			SDL_DestroyTexture(glyphAtlas);
+			glyphAtlas = NULL;
+		}
+		else
+			SDL_SetTextureBlendMode(glyphAtlas, SDL_BLENDMODE_BLEND);
+	}
+	if (!glyphAtlas) {
+		WriteLog("GUI: Could not create glyph atlas; using per-character texture fallback.\n");
+	}
 
 	for(uint32_t i=0; i<128*380; i++)
 		texturePointer[i] = 0xB0A000A0;
@@ -431,6 +472,49 @@ bool GUI::KeyDown(uint32_t key)
 
 void GUI::HandleIconSelection(SDL_Renderer * renderer)
 {
+	// DriveLightStatus() consumes its indication, so sample each drive once
+	// and use that value when rebuilding the corresponding icon texture.
+	int lightState[2] = {
+		floppyDrive[0].DriveLightStatus(0),
+		floppyDrive[0].DriveLightStatus(1)
+	};
+
+	bool driveEmpty[2] = {
+		floppyDrive[0].IsEmpty(0),
+		floppyDrive[0].IsEmpty(1)
+	};
+
+	// The sidebar is rendered every frame, but its contents rarely change.
+	// Avoid rebuilding its textures unless one of their actual inputs changes.
+	static bool cacheValid = false;
+	static int cachedIconSelected = -1;
+	static bool cachedPowerOnState = false;
+	static bool cachedDriveEmpty[2] = { false, false };
+	static int cachedLightState[2] = { DLS_OFF, DLS_OFF };
+	static bool cachedDisk1EjectHovered = false;
+	static bool cachedDisk2EjectHovered = false;
+	static bool cachedDisk1NewDiskHovered = false;
+	static bool cachedDisk2NewDiskHovered = false;
+
+	bool changed = !cacheValid
+		|| (cachedIconSelected != iconSelected)
+		|| (cachedPowerOnState != powerOnState)
+		|| (cachedDriveEmpty[0] != driveEmpty[0])
+		|| (cachedDriveEmpty[1] != driveEmpty[1])
+		|| (cachedLightState[0] != lightState[0])
+		|| (cachedLightState[1] != lightState[1])
+		|| (cachedDisk1EjectHovered != disk1EjectHovered)
+		|| (cachedDisk2EjectHovered != disk2EjectHovered)
+		|| (cachedDisk1NewDiskHovered != disk1NewDiskHovered)
+		|| (cachedDisk2NewDiskHovered != disk2NewDiskHovered);
+
+	if (!changed) {
+		return;
+	}
+
+	sidebarDriveLightState[0] = lightState[0];
+	sidebarDriveLightState[1] = lightState[1];
+
 	// Set up drive icons in their current states
 	AssembleDriveIcon(renderer, 0);
 	AssembleDriveIcon(renderer, 1);
@@ -456,6 +540,18 @@ void GUI::HandleIconSelection(SDL_Renderer * renderer)
 
 	// Set render target back to default
 	SDL_SetRenderTarget(renderer, NULL);
+
+	cachedIconSelected = iconSelected;
+	cachedPowerOnState = powerOnState;
+	cachedDriveEmpty[0] = driveEmpty[0];
+	cachedDriveEmpty[1] = driveEmpty[1];
+	cachedLightState[0] = lightState[0];
+	cachedLightState[1] = lightState[1];
+	cachedDisk1EjectHovered = disk1EjectHovered;
+	cachedDisk2EjectHovered = disk2EjectHovered;
+	cachedDisk1NewDiskHovered = disk1NewDiskHovered;
+	cachedDisk2NewDiskHovered = disk2NewDiskHovered;
+	cacheValid = true;
 }
 
 
@@ -522,7 +618,8 @@ void GUI::DrawNewDiskButton(SDL_Renderer * renderer, int driveNumber)
 
 void GUI::DrawDriveLight(SDL_Renderer * renderer, int driveNumber)
 {
-	int lightState = floppyDrive[0].DriveLightStatus(driveNumber);
+//	int lightState = floppyDrive[0].DriveLightStatus(driveNumber);
+	int lightState = sidebarDriveLightState[driveNumber];
 	int r = 0x77, g = 0x00, b = 0x00;
 
 	if (lightState == DLS_READ)
@@ -555,14 +652,28 @@ void GUI::DrawCharArray(SDL_Renderer * renderer, const char * array, int x,
 
 void GUI::DrawCharacter(SDL_Renderer * renderer, int x, int y, uint8_t c, bool invert/*= false*/)
 {
-	uint32_t inv = (invert ? 0x000000FF : 0x00000000);
-	uint32_t pixel = 0xFFFFC000;	// RRGGBBAA
-	uint8_t * ptr = (uint8_t *)&font10pt[(c - 0x20) * FONT_WIDTH * FONT_HEIGHT];
+//	uint32_t inv = (invert ? 0x000000FF : 0x00000000);
+//	uint32_t pixel = 0xFFFFC000;	// RRGGBBAA
+//	uint8_t * ptr = (uint8_t *)&font10pt[(c - 0x20) * FONT_WIDTH * FONT_HEIGHT];
 	SDL_Rect dst;
 	dst.x = x * FONT_WIDTH, dst.y = y * FONT_HEIGHT, dst.w = FONT_WIDTH, dst.h = FONT_HEIGHT;
 
-	for(int i=0; i<FONT_WIDTH*FONT_HEIGHT; i++)
+	if (glyphAtlas && c >= 0x20 && c < 0x80)
+	{
+		SDL_Rect src = { (c - 0x20) * FONT_WIDTH,
+			(invert ? FONT_HEIGHT : 0), FONT_WIDTH, FONT_HEIGHT };
+		SDL_RenderCopy(renderer, glyphAtlas, &src, &dst);
+		return;
+	}
+
+	// Preserve the original path for unsupported glyphs or atlas failure.
+	uint32_t inv = (invert ? 0x000000FF : 0x00000000);
+	uint32_t pixel = 0xFFFFC000;	// RRGGBBAA
+	uint8_t * ptr = (uint8_t *)&font13pt[(c - 0x20) * FONT_WIDTH * FONT_HEIGHT];
+
+	for(int i=0; i<FONT_WIDTH*FONT_HEIGHT; i++) {
 		stamp[i] = (pixel | ptr[i]) ^ inv;
+	}
 
 	SDL_UpdateTexture(charStamp, NULL, stamp, FONT_WIDTH * sizeof(Uint32));
 	SDL_RenderCopy(renderer, charStamp, NULL, &dst);
@@ -576,7 +687,8 @@ void GUI::DrawCharacterVert(SDL_Renderer * renderer, int x, int y, uint8_t c, bo
 {
 	uint32_t inv = (invert ? 0x000000FF : 0x00000000);
 	uint32_t pixel = 0xFFFFC000;	// RRGGBBAA
-	uint8_t * ptr = (uint8_t *)&font10pt[(c - 0x20) * FONT_WIDTH * FONT_HEIGHT];
+//	uint8_t * ptr = (uint8_t *)&font10pt[(c - 0x20) * FONT_WIDTH * FONT_HEIGHT];
+	uint8_t * ptr = (uint8_t *)&font13pt[(c - 0x20) * FONT_WIDTH * FONT_HEIGHT];
 	SDL_Rect dst;
 	dst.x = x, dst.y = y, dst.w = FONT_WIDTH, dst.h = FONT_HEIGHT;
 	SDL_Point pt = { FONT_WIDTH - 1, FONT_HEIGHT - 1 };
@@ -670,13 +782,15 @@ void GUI::DrawSidebarIcons(SDL_Renderer * renderer)
 void GUI::Render(SDL_Renderer * renderer)
 {
 	// Sanity check
-	if (!overlay)
+	if (!overlay) {
 		return;
+	}
 
 	HandleGUIState();
 
-	if (sidebarState != SBS_HIDDEN)
+	if (sidebarState != SBS_HIDDEN) {
 		HandleIconSelection(renderer);
+	}
 
 	SDL_RenderCopy(renderer, overlay, NULL, &olDst);
 

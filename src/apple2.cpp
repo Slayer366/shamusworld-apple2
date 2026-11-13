@@ -1361,8 +1361,9 @@ static void FrameCallback(void)
 
 	blinkTimer = (blinkTimer + 1) & 0x1F;
 
-	if (blinkTimer == 0)
+	if (blinkTimer == 0) {
 		flash = !flash;
+	}
 
 	// Render the Apple screen + GUI overlay
 	RenderAppleScreen(sdlRenderer);

@@ -25,7 +25,8 @@
 #include "crc32.h"
 #include "fileio.h"
 #include "floppydrive.h"
-#include "font10pt.h"
+//#include "font10pt.h"
+#include "font13pt.h"
 #include "gui.h"
 #include "log.h"
 #include "settings.h"
@@ -45,8 +46,10 @@ struct Bitmap {
 
 enum { DSS_SHOWING, DSS_HIDING, DSS_SHOWN, DSS_HIDDEN, DSS_LSB_SHOWING, DSS_LSB_SHOWN, DSS_LSB_HIDING, DSS_RSB_SHOWING, DSS_RSB_SHOWN, DSS_RSB_HIDING, DSS_TEXT_SCROLLING };
 
-#define DS_WIDTH			402
-#define DS_HEIGHT			322
+//#define DS_WIDTH			402
+//#define DS_HEIGHT			322
+#define DS_WIDTH			480
+#define DS_HEIGHT			376
 #define SCROLL_HOT_WIDTH	48
 #define DS_XPOS	((VIRTUAL_SCREEN_WIDTH - DS_WIDTH) / 2)
 #define DS_YPOS	((VIRTUAL_SCREEN_HEIGHT - DS_HEIGHT) / 2)
@@ -442,6 +445,7 @@ void DiskSelector::DrawFilenames(SDL_Renderer * renderer)
 	}
 
 	// 3 columns of 16 chars apiece (with 8X16 font), 18 rows
+	// 3 columns of 19 chars apiece (with 8X13 font), 27 rows
 	// 3 columns of 18 chars apiece (with 7X12 font), 24 rows
 	// 3 columns of 21 chars apiece (with 6X11 font), 27 rows
 
@@ -458,7 +462,8 @@ void DiskSelector::DrawFilenames(SDL_Renderer * renderer)
 
 		for(unsigned int y=0; y<27; y++)
 		{
-			for(unsigned int i=22+textScrollCount, x=0; i<21; i++, x++)
+//			for(unsigned int i=22+textScrollCount, x=0; i<21; i++, x++)
+			for(unsigned int i=19+textScrollCount, x=0; i<19; i++, x++)
 			{
 				if (i >= fsList[partialColStart + y].image.length())
 					break;
@@ -469,11 +474,13 @@ void DiskSelector::DrawFilenames(SDL_Renderer * renderer)
 	}
 	else if (textScrollCount > 0)
 	{
-		offset = 22 - textScrollCount;
+//		offset = 22 - textScrollCount;
+		offset = 19 - textScrollCount;
 
 		for(unsigned int y=0; y<27; y++)
 		{
-			for(unsigned int i=textScrollCount, x=0; i<21; i++, x++)
+//			for(unsigned int i=textScrollCount, x=0; i<21; i++, x++)
+			for(unsigned int i=textScrollCount, x=0; i<19; i++, x++)
 			{
 				if (i >= fsList[fsStart + y].image.length())
 					break;
@@ -491,12 +498,14 @@ void DiskSelector::DrawFilenames(SDL_Renderer * renderer)
 //		int currentY = (count % 18);
 //		int currentX = (count / 24) * 19;
 //		int currentY = (count % 24);
-		int currentX = (count / 27) * 22;
+//		int currentX = (count / 27) * 22;
+		int currentX = (count / 27) * 20;
 		int currentY = (count % 27);
 
 //		for(unsigned int i=0; i<16; i++)
 //		for(unsigned int i=0; i<18; i++)
-		for(unsigned int i=0; i<21; i++)
+//		for(unsigned int i=0; i<21; i++)
+		for(unsigned int i=0; i<19; i++)
 		{
 			if (i >= fsList[fsStart].image.length())
 				break;
@@ -560,7 +569,8 @@ void DiskSelector::MouseDown(int32_t x, int32_t y, uint32_t buttons)
 	if ((diskSelectorState == DSS_LSB_SHOWING) || (diskSelectorState == DSS_LSB_SHOWN))
 	{
 		colStart--;
-		textScrollCount = 21;
+//		textScrollCount = 21;
+		textScrollCount = 19;
 
 		if (colStart == 0)
 		{
@@ -601,17 +611,20 @@ void DiskSelector::MouseUp(int32_t x, int32_t y, uint32_t buttons)
 
 }
 
+static bool DrawSelection(SDL_Renderer * renderer, int oldSelection, int newSelection);
 
 void DiskSelector::MouseMove(int32_t x, int32_t y, uint32_t buttons)
 {
-	if (!showWindow)
+	if (!showWindow) {
 		return;
+	}
 
 	// Check to see if DS has been hovered yet, and, if so, set a flag to show
 	// that it has
 	if (!entered && ((x >= DS_XPOS) && (x <= (DS_XPOS + DS_WIDTH))
-		&& (y >= DS_YPOS) && (y <= (DS_YPOS + DS_HEIGHT))))
+		&& (y >= DS_YPOS) && (y <= (DS_YPOS + DS_HEIGHT)))) {
 		entered = true;
+	}
 
 	// Check to see if the DS, since being hovered, is now no longer being
 	// hovered
@@ -630,8 +643,9 @@ void DiskSelector::MouseMove(int32_t x, int32_t y, uint32_t buttons)
 	}
 
 	// Bail out if the DS hasn't been entered yet
-	if (!entered)
+	if (!entered) {
 		return;
+	}
 
 /*
 states:
@@ -682,21 +696,24 @@ states:
 	// down)
 	int xChar = ((x - DS_XPOS) / FONT_WIDTH) - 1;
 	int yChar = ((y - DS_YPOS) / FONT_HEIGHT) - 1;
-	diskSelected = ((xChar / 22) * 27) + yChar + (colStart * 27);
+//	diskSelected = ((xChar / 22) * 27) + yChar + (colStart * 27);
+	diskSelected = ((xChar / 20) * 27) + yChar + (colStart * 27);
 
 	if ((yChar < 0) || (yChar >= 27)
 		|| (diskSelected >= (int)fsList.size())
 		|| (diskSelectorState == DSS_LSB_SHOWING)
 		|| (diskSelectorState == DSS_LSB_SHOWN)
 		|| (diskSelectorState == DSS_RSB_SHOWING)
-		|| (diskSelectorState == DSS_RSB_SHOWN))
+		|| (diskSelectorState == DSS_RSB_SHOWN)) {
 		diskSelected = -1;
-
+	}
+/*
 	if (diskSelected != lastDiskSelected)
 	{
 		HandleSelection(sdlRenderer);
 		lastDiskSelected = diskSelected;
 	}
+*/
 }
 
 
@@ -753,6 +770,82 @@ void DiskSelector::HandleGUIState(void)
 }
 
 
+// Redraw only the portions of the selector affected by a selection change.
+// This is used only when the list is stationary; scrolling/animation continues
+// to use DrawFilenames() so its existing rendering behavior is unchanged.
+static bool DrawSelection(SDL_Renderer * renderer, int oldSelection, int newSelection)
+{
+	SDL_Rect topLine = { 0, 0, DS_WIDTH, FONT_HEIGHT };
+
+	// Restore the top line and the affected filename rows from the original
+	// green background. windowPixels is the same backing image used by the
+	// existing full-window refresh.
+	if (SDL_UpdateTexture(window, &topLine, windowPixels, DS_WIDTH * sizeof(Uint32)) < 0) {
+		return false;
+	}
+
+	int selections[2] = { oldSelection, newSelection };
+	for (int i = 0; i < 2; ++i)
+	{
+		int selection = selections[i];
+		if ((selection < 0) || (selection >= (int)fsList.size())) {
+			continue;
+		}
+
+		int relativeIndex = selection - (colStart * 27);
+		if ((relativeIndex < 0) || (relativeIndex >= 81)) {
+			continue;
+		}
+
+		int column = relativeIndex / 27;
+		int row = relativeIndex % 27;
+//		SDL_Rect rowRect = { column * 22 * FONT_WIDTH, (row + 1) * FONT_HEIGHT, 22 * FONT_WIDTH, FONT_HEIGHT };
+		SDL_Rect rowRect = { column * 20 * FONT_WIDTH, (row + 1) * FONT_HEIGHT, 20 * FONT_WIDTH, FONT_HEIGHT };
+		const Uint32 *rowPixels = &windowPixels[rowRect.y * DS_WIDTH + rowRect.x];
+
+		if (SDL_UpdateTexture(window, &rowRect, rowPixels, DS_WIDTH * sizeof(Uint32)) < 0) {
+			return false;
+		}
+	}
+
+	if (SDL_SetRenderTarget(renderer, window) < 0) {
+		return false;
+	}
+
+	for (int i = 0; i < 2; ++i)
+	{
+		int selection = selections[i];
+		if ((selection < 0) || (selection >= (int)fsList.size())) {
+			continue;
+		}
+
+		int relativeIndex = selection - (colStart * 27);
+		if ((relativeIndex < 0) || (relativeIndex >= 81)) {
+			continue;
+		}
+
+		int column = relativeIndex / 27;
+		int row = relativeIndex % 27;
+		const std::string &name = fsList[selection].image;
+//		for (unsigned int ch = 0; ch < 21 && ch < name.length(); ++ch)
+//			GUI::DrawCharacter(renderer, column * 22 + ch + 1, row + 1,
+		for (unsigned int ch = 0; ch < 19 && ch < name.length(); ++ch)
+			GUI::DrawCharacter(renderer, column * 20 + ch + 1, row + 1,
+				name[ch], selection == newSelection);
+	}
+
+	if (newSelection >= 0 && newSelection < (int)fsList.size())
+	{
+		const std::string &name = fsList[newSelection].image;
+		for (unsigned int ch = 0; ch < 65 && ch < name.length(); ++ch)
+			GUI::DrawCharacter(renderer, ch + 1, 0, name[ch], true);
+	}
+
+	SDL_SetRenderTarget(renderer, NULL);
+	return true;
+}
+
+
 void DiskSelector::HandleSelection(SDL_Renderer * renderer)
 {
 	SDL_UpdateTexture(window, NULL, windowPixels, DS_WIDTH * sizeof(Uint32));
@@ -763,28 +856,47 @@ void DiskSelector::HandleSelection(SDL_Renderer * renderer)
 
 void DiskSelector::Render(SDL_Renderer * renderer)
 {
-	if (!(window && showWindow))
+	if (!(window && showWindow)) {
 		return;
+	}
 
 	HandleGUIState();
 
-	if (((diskSelectorState != DSS_LSB_SHOWN)
-		&& (diskSelectorState != DSS_RSB_SHOWN)
-		&& (diskSelectorState != DSS_SHOWN))
-		|| (textScrollCount != 0) || refresh)
+	if ((textScrollCount != 0) || refresh)
+	{
 		HandleSelection(renderer);
-
-	// Render scroll arrows (need to figure out why no alpha!)
-	SDL_SetRenderTarget(renderer, window);
-	SDL_Rect dst2 = { 0, ((DS_HEIGHT - 40) / 2), 40, 40 };
-	dst2.x = lsbPos;
-	SDL_RenderCopy(renderer, scrollLeftIcon, NULL, &dst2);
-	SDL_Rect dst3 = { 0, ((DS_HEIGHT - 40) / 2), 40, 40 };
-	dst3.x = rsbPos;
-	SDL_RenderCopy(renderer, scrollRightIcon, NULL, &dst3);
-	SDL_SetRenderTarget(renderer, NULL);
+		lastDiskSelected = diskSelected;
+	}
+	else if (diskSelected != lastDiskSelected)
+	{
+		// Arrow visibility and animation are a separate overlay, so selection
+		// changes can use the small dirty regions even while arrows are moving.
+		if (!DrawSelection(renderer, lastDiskSelected, diskSelected)) {
+			HandleSelection(renderer);
+		} else {
+			refresh = false;
+		}
+		lastDiskSelected = diskSelected;
+	}
 
 	SDL_Rect dst = { DS_XPOS, DS_YPOS, DS_WIDTH, DS_HEIGHT };
 	SDL_RenderCopy(renderer, window, NULL, &dst);
+
+	// Draw arrows directly over the selector instead of into its filename render target.
+	// This keeps arrow drawing independent of the expensive filename texture and prevents
+	// stale arrow pixels from requiring a full filename redraw.
+	SDL_Rect oldClip;
+	SDL_RenderGetClipRect(renderer, &oldClip);
+	SDL_bool oldClipEnabled = SDL_RenderIsClipEnabled(renderer);
+	SDL_Rect selectorClip = { DS_XPOS, DS_YPOS, DS_WIDTH, DS_HEIGHT };
+	SDL_RenderSetClipRect(renderer, &selectorClip);
+
+	SDL_Rect dst2 = { DS_XPOS + lsbPos, DS_YPOS + ((DS_HEIGHT - 40) / 2), 40, 40 };
+	SDL_RenderCopy(renderer, scrollLeftIcon, NULL, &dst2);
+
+	SDL_Rect dst3 = { DS_XPOS + rsbPos, DS_YPOS + ((DS_HEIGHT - 40) / 2), 40, 40 };
+	SDL_RenderCopy(renderer, scrollRightIcon, NULL, &dst3);
+
+	SDL_RenderSetClipRect(renderer, oldClipEnabled ? &oldClip : NULL);
 }
 
