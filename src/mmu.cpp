@@ -964,7 +964,7 @@ WriteLog("Setting MIXED to %s...\n", (address & 0x01 ? "ON" : "off"));
 */
 uint8_t SwitchPAGE2R(uint16_t address)
 {
-WriteLog("Setting PAGE2 to %s...\n", (address & 0x01 ? "ON" : "off"));
+//WriteLog("Setting PAGE2 to %s...\n", (address & 0x01 ? "ON" : "off"));
 	displayPage2 = (bool)(address & 0x01);
 
 	if (store80Mode)
@@ -985,7 +985,7 @@ WriteLog("Setting PAGE2 to %s...\n", (address & 0x01 ? "ON" : "off"));
 
 void SwitchPAGE2W(uint16_t address, uint8_t)
 {
-WriteLog("Setting PAGE2 to %s...\n", (address & 0x01 ? "ON" : "off"));
+//WriteLog("Setting PAGE2 to %s...\n", (address & 0x01 ? "ON" : "off"));
 	displayPage2 = (bool)(address & 0x01);
 
 	if (store80Mode)
