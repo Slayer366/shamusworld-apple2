@@ -621,6 +621,7 @@ static void ResetApple2State(void)
 }
 
 static double cyclesForSample = 0;
+static const double cyclesPerSample = APPLE2_CPU_CLOCK_HZ / SAMPLE_RATE;
 static void AppleTimer(uint16_t cycles)
 {
 	// Handle PHI2 clocked stuff here...
@@ -629,11 +630,12 @@ static void AppleTimer(uint16_t cycles)
 
 #if 1
 	// Handle sound
-	// 21.26009 cycles per sample @ 48000 (running @ 1,020,484.32 Hz)
-	// 16.688154500083 ms = 1 frame
+	// Samples are clocked from emulated Apple II CPU cycles, not host time.
+	// 16.688154500083 ms = 1 frame at 1,020,484.32 CPU cycles/sec.
 	cyclesForSample += (double)cycles;
 
-	if (cyclesForSample >= 21.26009)
+//	if (cyclesForSample >= 21.26009)
+	if (cyclesForSample >= cyclesPerSample)
 	{
         #if 0
         sampleClock = mainCPU.clock;
@@ -642,7 +644,8 @@ static void AppleTimer(uint16_t cycles)
         lastSampleClock = sampleClock;
         #endif
 			WriteSampleToBuffer(turboFrame);
-			cyclesForSample -= 21.26009;
+//			cyclesForSample -= 21.26009;
+			cyclesForSample -= cyclesPerSample;
 	}
 #endif
 }
@@ -873,9 +876,11 @@ So we need to decouple the CPU thread from the host video thread, and have the C
 	running = true;
 	InitializeEventList();
 	// Set frame to fire at 1/60 s interval
-	SetCallbackTime(FrameCallback, 16666.66666667);
+//	SetCallbackTime(FrameCallback, 16666.66666667);
 	// Set up blinking at 1/4 s intervals
 //	SetCallbackTime(BlinkTimer, 250000);
+	// (262 lines, 17,030 CPU cycles).
+	SetCallbackTime(FrameCallback, 16688.154500083);
 	startTicks = SDL_GetTicks();
 
 #ifdef THREADED_65C02
@@ -1007,6 +1012,7 @@ uint8_t apple2e_keycode[4][56] = {
 	}
 };
 
+static bool capsLockOn = true;
 static uint32_t frameCount = 0;
 static void FrameCallback(void)
 {
@@ -1022,12 +1028,22 @@ static void FrameCallback(void)
 		{
 		case SDL_KEYDOWN:
 			// We do our own repeat handling thank you very much! :-)
-			if (event.key.repeat != 0)
+			if (event.key.repeat != 0) {
 				break;
+			}
+
+			// Start with caps lock on by default
+			if (event.key.keysym.sym == SDLK_CAPSLOCK)
+			{
+				capsLockOn = !capsLockOn;
+				SpawnMessage("Caps Lock: %s", capsLockOn ? "ON" : "off");
+				break;
+			}
 
 			// This breaks IMEs and the like, but we'll do simple for now
-			if (GUI::KeyDown(event.key.keysym.sym))
+			if (GUI::KeyDown(event.key.keysym.sym)) {
 				break;
+			}
 
 			// Use CTRL+SHIFT+Q to exit, as well as the usual window decoration
 			// method
@@ -1134,9 +1150,18 @@ static void FrameCallback(void)
 				keyDown = true;
 
 				// Handle Caps Lock
-				if ((SDL_GetModState() & KMOD_CAPS)
-					&& (lastKeyPressed >= 0x61) && (lastKeyPressed <= 0x7A))
-					lastKeyPressed -= 0x20;
+//				if ((SDL_GetModState() & KMOD_CAPS)
+//					&& (lastKeyPressed >= 0x61) && (lastKeyPressed <= 0x7A))
+//					lastKeyPressed -= 0x20;
+				if (capsLockOn)
+				{
+					if ((lastKeyPressed >= 0x61) && (lastKeyPressed <= 0x7A)) {
+						lastKeyPressed -= 0x20;
+					}
+					else if ((lastKeyPressed >= 0x41) && (lastKeyPressed <= 0x5A)) {
+						lastKeyPressed += 0x20;
+					}
+				}
 
 				// Handle key repeat if the key hasn't been held
 				keyDelay = 15;
@@ -1370,7 +1395,8 @@ static void FrameCallback(void)
 	GUI::Render(sdlRenderer);
 	custMouse.draw(sdlRenderer);
 	SDL_RenderPresent(sdlRenderer);
-	SetCallbackTime(FrameCallback, 16666.66666667);
+//	SetCallbackTime(FrameCallback, 16666.66666667);
+	SetCallbackTime(FrameCallback, 16688.154500083);
 
 #ifdef CPU_CLOCK_CHECKING
 //We know it's stopped, so we can get away with this...

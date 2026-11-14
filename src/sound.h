@@ -12,6 +12,9 @@
 
 #define SAMPLE_RATE		(48000.0)
 
+#define APPLE2_CPU_CLOCK_HZ (1020484.32)
+#define APPLE2_FRAME_RATE   (APPLE2_CPU_CLOCK_HZ / (65.0 * 262.0))
+
 // Global variables (exported)
 
 

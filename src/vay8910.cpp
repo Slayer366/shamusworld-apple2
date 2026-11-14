@@ -223,7 +223,7 @@ uint16_t VAY_3_8910::GetSample(void)
 
 	// Number of cycles per second to run the PSG is the 6502 clock rate
 	// divided by the host sample rate
-	const static double exactCycles = 1020484.32 / (double)SAMPLE_RATE;
+	const static double exactCycles = APPLE2_CPU_CLOCK_HZ / (double)SAMPLE_RATE;
 	static double overflow = 0;
 
 	int fullCycles = (int)exactCycles;
