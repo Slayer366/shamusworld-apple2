@@ -8,6 +8,7 @@
 #include "settings.h"
 
 #include <stdlib.h>
+#include <errno.h>
 #include <map>
 #include <string>
 #include <SDL2/SDL.h>
@@ -38,6 +39,7 @@ static int8_t FindConfig(void);
 static void ParseConfigFile(void);
 static bool GetValue(const char *, bool);
 static int GetValue(const char *, int);
+static int GetPercentValue(const char *, int, int);
 static const char * GetValue(const char *, const char *);
 static void SetValue(const char * key, bool value);
 static void SetValue(const char * key, int value);
@@ -63,6 +65,8 @@ void LoadSettings(void)
 	settings.renderType = GetValue("renderType", 0);
 	settings.autoStateSaving = GetValue("autoSaveState", false);
 	settings.enhancedDiskSpeed = GetValue("enhancedDiskSpeed", true);
+	settings.speakerVolume = GetPercentValue("speakerVolume", 75, 100);
+	settings.mockingboardVolume = GetPercentValue("mockingboardVolume", 100, 1000);
 
 	settings.winX = GetValue("windowX", 250);
 	settings.winY = GetValue("windowY", 100);
@@ -91,6 +95,8 @@ void SaveSettings(void)
 	SDL_GetWindowPosition(sdlWindow, &settings.winX, &settings.winY);
 
 	SetValue("enhancedDiskSpeed", settings.enhancedDiskSpeed);
+	SetValue("speakerVolume", settings.speakerVolume);
+	SetValue("mockingboardVolume", settings.mockingboardVolume);
 	SetValue("autoSaveState", settings.autoStateSaving);
 	SetValue("autoStateFilename", settings.autoStatePath);
 	SetValue("useJoystick", settings.useJoystick);
@@ -193,6 +199,30 @@ static int GetValue(const char * key, int def)
 		return def;
 
 	return atoi(keystore[key].c_str());
+}
+
+
+static int GetPercentValue(const char * key, int def, int maxValue)
+{
+	std::map<std::string, std::string>::const_iterator i = keystore.find(key);
+	if (i == keystore.end() || i->second.empty()) {
+		return def;
+	}
+
+	errno = 0;
+	char * end = NULL;
+	long value = strtol(i->second.c_str(), &end, 10);
+	while (end != NULL && (*end == ' ' || *end == '\t' || *end == '\r')) {
+		end++;
+	}
+	if (errno == ERANGE || end == i->second.c_str() || end == NULL || *end != '\0'
+		|| value < 0 || value > maxValue)
+	{
+		WriteLog("Settings: Invalid %s value; using default (%d).\n", key, def);
+		return def;
+	}
+
+	return (int)value;
 }
 
 

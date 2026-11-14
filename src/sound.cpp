@@ -279,6 +279,18 @@ void ToggleSpeaker(void)
 }
 
 
+void SetVolumePercent(int percent)
+{
+	if (percent < 0)
+		percent = 0;
+	else if (percent > 100)
+		percent = 100;
+
+	// Map 0-100 percent onto the existing 0-16 speaker amplitude table.
+	ampPtr = (uint8_t)((percent * 16 + 50) / 100);
+}
+
+
 void VolumeUp(void)
 {
 	// Currently set for 16-bit samples

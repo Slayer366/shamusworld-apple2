@@ -27,6 +27,7 @@ void SoundResume(void);
 void ToggleSpeaker(void);
 void WriteSampleToBuffer(bool discardOutput);
 bool SpeakerIsActive(void);
+void SetVolumePercent(int percent);
 void VolumeUp(void);
 void VolumeDown(void);
 uint8_t GetVolume(void);

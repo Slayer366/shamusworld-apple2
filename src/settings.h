@@ -31,6 +31,8 @@ struct Settings
 	uint32_t renderType;
 	bool autoStateSaving;		// Auto-state loading/saving on entry/exit
 	bool enhancedDiskSpeed;		// Run faster than real time while the floppy is being read/written
+	int speakerVolume;			// Apple II speaker volume (0-100 percent)
+	int mockingboardVolume;		// Mockingboard volume (percent of the internal default)
 
 	// Window settings
 

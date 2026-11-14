@@ -736,6 +736,9 @@ int main(int argc, char *argv[])
 	InitLog("./apple2.log");
 	LoadSettings();
 
+	SetVolumePercent(settings.speakerVolume);
+	VAY_3_8910::maxVolume = 8192.0f * (settings.mockingboardVolume / 100.0f);
+
 	const char *commandLineHDImage = NULL;
 	const char *commandLineFloppyImage = NULL;
 	if (argc == 2) {
