@@ -743,7 +743,8 @@ uint8_t ReadKeyStrobe(uint16_t)
 {
 	// No character data is read from here, just the 'any key was pressed'
 	// signal...
-	uint8_t byte = (uint8_t)keyDown << 7;
+//	uint8_t byte = (uint8_t)keyDown << 7;
+	uint8_t byte = (uint8_t)(keyDown || IsHostKeyHeld()) << 7;
 	keyDown = false;
 	return byte;
 }

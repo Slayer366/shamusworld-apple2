@@ -20,6 +20,7 @@ extern V65C02REGS mainCPU;						// v65C02 execution context
 extern uint8_t appleType;
 extern uint8_t lastKeyPressed;
 extern bool keyDown;
+extern bool IsHostKeyHeld(void);
 extern bool openAppleDown;
 extern bool closedAppleDown;
 extern bool store80Mode;

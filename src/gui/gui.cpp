@@ -288,8 +288,13 @@ void GUI::MouseDown(int32_t x, int32_t y, uint32_t buttons)
 		powerOnState = !powerOnState;
 		SetPowerState();
 
-		if (!powerOnState)
+		if (!powerOnState) {
 			SpawnMessage("*** POWER OFF ***");
+		}
+
+		if (powerOnState) {
+			SpawnMessage("*** POWER ON ***");
+		}
 
 		break;
 	// Disk #1

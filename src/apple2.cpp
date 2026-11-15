@@ -116,6 +116,7 @@ static int16_t hideMouseTimeout = 360;
 // Vars to handle the //e's 2-key rollover
 static SDL_Keycode keysHeld[2];
 static uint8_t keysHeldAppleCode[2];
+static SDL_Scancode keysHeldScancode[2];
 static uint8_t keyDownCount = 0;
 static uint8_t keyDelay = 0;
 
@@ -164,6 +165,28 @@ static void SignalCPUThread(void)
 	SDL_mutexP(cpuMutex);
 	SDL_CondSignal(cpuCond);
 	SDL_mutexV(cpuMutex);
+}
+
+// Report whether any key in the Apple keyboard's 2-key rollover buffer is
+// still physically held on the host keyboard.
+bool IsHostKeyHeld(void)
+{
+	int numKeys = 0;
+	const uint8_t *keyboardState = SDL_GetKeyboardState(&numKeys);
+
+	if (keyboardState == nullptr) {
+		return false;
+	}
+
+	for (uint8_t i = 0; i < keyDownCount; i++)
+	{
+		SDL_Scancode scancode = keysHeldScancode[i];
+		if ((scancode > SDL_SCANCODE_UNKNOWN) && (scancode < numKeys) && keyboardState[scancode]) {
+			return true;
+		}
+	}
+
+	return false;
 }
 
 // Disk turbo ("enhanced disk speed"): while the floppy is being read or
@@ -1045,7 +1068,7 @@ static void FrameCallback(void)
 			if (event.key.keysym.sym == SDLK_CAPSLOCK)
 			{
 				capsLockOn = !capsLockOn;
-				SpawnMessage("Caps Lock: %s", capsLockOn ? "ON" : "off");
+				SpawnMessage("Caps Lock: %s", capsLockOn ? "ON" : "OFF");
 				break;
 			}
 
@@ -1079,7 +1102,7 @@ static void FrameCallback(void)
 				break;
 			}
 
-			// There has GOT to be a better way off mapping SDLKs to our
+			// There has GOT to be a better way of mapping SDLKs to our
 			// keyindex. But for now, this should suffice.
 			keyIndex = 0xFF;
 
@@ -1149,11 +1172,13 @@ static void FrameCallback(void)
 				// Handle Shift, CTRL, & Shift+CTRL combos
 				uint8_t table = 0;
 
-				if (event.key.keysym.mod & KMOD_CTRL)
+				if (event.key.keysym.mod & KMOD_CTRL) {
 					table |= 1;
+				}
 
-				if (event.key.keysym.mod & KMOD_SHIFT)
+				if (event.key.keysym.mod & KMOD_SHIFT) {
 					table |= 2;
+				}
 
 				lastKeyPressed = apple2e_keycode[table][keyIndex];
 				keyDown = true;
@@ -1181,6 +1206,7 @@ static void FrameCallback(void)
 				if (keyDownCount >= 2)
 				{
 					keysHeld[1] = keysHeld[0];
+					keysHeldScancode[1] = keysHeldScancode[0];
 					keysHeldAppleCode[1] = keysHeldAppleCode[0];
 
 					if (keyDownCount > 2)
@@ -1188,6 +1214,7 @@ static void FrameCallback(void)
 				}
 
 				keysHeld[0] = event.key.keysym.sym;
+				keysHeldScancode[0] = event.key.keysym.scancode;
 				keysHeldAppleCode[0] = lastKeyPressed;
 				break;
 			}
@@ -1208,16 +1235,21 @@ static void FrameCallback(void)
 				}
 			}
 			// Buttons 0 & 1
-			else if (event.key.keysym.sym == SDLK_LALT)
+			else if (event.key.keysym.sym == SDLK_LALT) {
 				openAppleDown = true;
-			else if (event.key.keysym.sym == SDLK_RALT)
+			}
+			else if (event.key.keysym.sym == SDLK_RALT) {
 				closedAppleDown = true;
-			else if (event.key.keysym.sym == SDLK_F2)
+			}
+			else if (event.key.keysym.sym == SDLK_F2) {
 				TogglePalette();
-			else if (event.key.keysym.sym == SDLK_F3)
+			}
+			else if (event.key.keysym.sym == SDLK_F3) {
 				CycleScreenTypes();
-			else if (event.key.keysym.sym == SDLK_F4)
+			}
+			else if (event.key.keysym.sym == SDLK_F4) {
 				ToggleTickDisplay();
+			}
 			else if (event.key.keysym.sym == SDLK_F5)
 			{
 				VolumeDown();
@@ -1278,16 +1310,21 @@ static void FrameCallback(void)
 			break;
 
 		case SDL_KEYUP:
-			if (event.key.keysym.sym == SDLK_F12)
+			if (event.key.keysym.sym == SDLK_F12) {
 				fullscreenDebounce = false;
+			}
 			// Paddle buttons 0 & 1
-			else if (event.key.keysym.sym == SDLK_LALT)
+			else if (event.key.keysym.sym == SDLK_LALT) {
 				openAppleDown = false;
-			else if (event.key.keysym.sym == SDLK_RALT)
+			}
+			else if (event.key.keysym.sym == SDLK_RALT) {
 				closedAppleDown = false;
+			}
+			// Soft Reset (Ctrl+Reset on real Apple II)
 			else if ((event.key.keysym.mod & KMOD_CTRL)
-				&& (event.key.keysym.sym == SDLK_HOME))
+				&& (event.key.keysym.sym == SDLK_HOME)) {
 				resetKeyDown = false;
+			}
 			else
 			{
 				// Handle key buffering 'key up' event (2 key rollover)
@@ -1302,6 +1339,7 @@ static void FrameCallback(void)
 					{
 						keyDownCount--;
 						keysHeld[0] = keysHeld[1];
+						keysHeldScancode[0] = keysHeldScancode[1];
 						keysHeldAppleCode[0] = keysHeldAppleCode[1];
 					}
 					else if (event.key.keysym.sym == keysHeld[1])
@@ -1335,9 +1373,9 @@ static void FrameCallback(void)
 			break;
 
 		case SDL_WINDOWEVENT:
-			if (event.window.event == SDL_WINDOWEVENT_LEAVE)
+			if (event.window.event == SDL_WINDOWEVENT_LEAVE) {
 				GUI::MouseMove(0, 0, 0);
-
+			}
 			break;
 
 		case SDL_QUIT:
@@ -1463,8 +1501,9 @@ if (counter == 60)
 //let's wait, then signal...
 //works longer, but then still falls behind... [FIXED, see above]
 #ifdef THREADED_65C02
-	if (!pauseMode)
+	if (!pauseMode) {
 		SignalCPUThread();//OK, let the CPU go another frame...
+	}
 #endif
 }
 
