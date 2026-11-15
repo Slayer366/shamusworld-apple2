@@ -17,6 +17,7 @@
 #include "log.h"
 #include "mockingboard.h"
 #include "sound.h"
+#include "gamecontroller.h"
 #include "video.h"
 
 // Debug defines
@@ -138,6 +139,8 @@ uint8_t ReadCassetteIn(uint16_t);
 uint8_t ReadButton0(uint16_t);
 uint8_t ReadButton1(uint16_t);
 uint8_t ReadPaddle0(uint16_t);
+uint8_t ReadPaddleStrobe(uint16_t);
+void WritePaddleStrobe(uint16_t, uint8_t);
 uint8_t ReadIOUDIS(uint16_t);
 uint8_t ReadDHIRES(uint16_t);
 
@@ -193,6 +196,7 @@ AddressMap memoryMap[] = {
 	{ 0xC061, 0xC061, AM_READ, 0, 0, ReadButton0, 0 },
 	{ 0xC062, 0xC062, AM_READ, 0, 0, ReadButton1, 0 },
 	{ 0xC064, 0xC067, AM_READ, 0, 0, ReadPaddle0, 0 },
+	{ 0xC070, 0xC07F, AM_READ_WRITE, 0, 0, ReadPaddleStrobe, WritePaddleStrobe },
 	{ 0xC07E, 0xC07E, AM_READ_WRITE, 0, 0, ReadIOUDIS, SwitchIOUDIS },
 	{ 0xC07F, 0xC07F, AM_READ_WRITE, 0, 0, ReadDHIRES, SwitchIOUDIS },
 	{ 0xC080, 0xC08F, AM_READ_WRITE, 0, 0, SwitchLCR, SwitchLCW },
@@ -1050,12 +1054,14 @@ uint8_t ReadCassetteIn(uint16_t)
 
 uint8_t ReadButton0(uint16_t)
 {
-	return (uint8_t)openAppleDown << 7;
+//	return (uint8_t)openAppleDown << 7;
+	return (uint8_t)(openAppleDown || GameControllerGetButton(0)) << 7;
 }
 
 uint8_t ReadButton1(uint16_t)
 {
-	return (uint8_t)closedAppleDown << 7;
+//	return (uint8_t)closedAppleDown << 7;
+	return (uint8_t)(closedAppleDown || GameControllerGetButton(1)) << 7;
 }
 
 // The way the paddles work is that a strobe is written (or read) to $C070,
@@ -1063,9 +1069,35 @@ uint8_t ReadButton1(uint16_t)
 // to have bit 7 return to 0. If there are no paddles connected, bit 7
 // stays at 1.
 // NB: This is really paddles 0-3, not just 0 :-P
+/*
 uint8_t ReadPaddle0(uint16_t)
 {
 	return 0xFF;
+}
+*/
+static uint64_t paddleStrobeCycle = 0;
+
+uint8_t ReadPaddleStrobe(uint16_t)
+{
+	paddleStrobeCycle = mainCPU.clock;
+	return 0;
+}
+
+void WritePaddleStrobe(uint16_t, uint8_t)
+{
+	paddleStrobeCycle = mainCPU.clock;
+}
+
+uint8_t ReadPaddle0(uint16_t address)
+{
+	int paddleValue = GameControllerGetPaddleValue(address & 0x03);
+	if (paddleValue < 0) {
+		return 0xFF;
+	}
+
+	// Apple II paddle timing is approximately 11 CPU cycles per unit.
+	uint64_t elapsedCycles = mainCPU.clock - paddleStrobeCycle;
+	return (elapsedCycles < (uint64_t)paddleValue * 11) ? 0x80 : 0x00;
 }
 
 uint8_t ReadIOUDIS(uint16_t)

@@ -120,6 +120,7 @@ OBJS = \
 	obj/dis65c02.o        \
 	obj/fileio.o          \
 	obj/floppydrive.o     \
+	obj/gamecontroller.o  \
 	obj/harddrive.o       \
 	obj/log.o             \
 	obj/mmu.o             \

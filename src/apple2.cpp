@@ -61,6 +61,7 @@
 #include "gui/config.h"
 #include "gui/gui.h"
 #include "custmouse.h"
+#include "gamecontroller.h"
 
 // Debug and misc. defines
 
@@ -835,6 +836,7 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
+	GameControllerInit();
 	GUI::Init(sdlRenderer);
 
 	WriteLog("About to initialize audio...\n");
@@ -958,6 +960,7 @@ while (pc < 0xA3FF)
 
 	SaveSettings();
 	SoundDone();
+	GameControllerDone();
 	VideoDone();
 	LogDone();
 
@@ -1028,6 +1031,8 @@ static void FrameCallback(void)
 
 	while (SDL_PollEvent(&event))
 	{
+		GameControllerHandleEvent(event);
+
 		switch (event.type)
 		{
 		case SDL_KEYDOWN:
@@ -1340,7 +1345,9 @@ static void FrameCallback(void)
 		}
 	}
 
-	// Hide the mouse if it's been 1s since the last time it was moved
+	GameControllerUpdate();
+
+	// Hide the mouse if it's been 6s since the last time it was moved
 	// N.B.: Should disable mouse hiding if it's over the GUI...
 	if ((hideMouseTimeout > 0) && !(GUI::sidebarState == SBS_SHOWN || DiskSelector::showWindow == true || Config::showWindow == true)) {
 		hideMouseTimeout--;
