@@ -1435,7 +1435,7 @@ static void FrameCallback(void)
 
 			// Handle mouse showing when the mouse is hidden...
 //			if (hideMouseTimeout == -1) {
-//				SDL_ShowCursor(0);
+				SDL_ShowCursor(0);
 //			}
 
 //			hideMouseTimeout = 60;
