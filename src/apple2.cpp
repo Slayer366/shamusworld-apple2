@@ -1196,6 +1196,27 @@ static void FrameCallback(void)
 			// Stuff the key in if we have a valid one...
 			if (keyIndex != 0xFF)
 			{
+				// Ignore a second key-down for a key already in the held-key
+				// buffer. Identify physical keys by scancode, not keycode.
+				if (keyDownCount > 0)
+				{
+					bool alreadyHeld = false;
+					for (uint8_t i = 0; i < keyDownCount; i++)
+					{
+						if ((event.key.keysym.scancode != SDL_SCANCODE_UNKNOWN &&
+							 event.key.keysym.scancode == keysHeldScancode[i]) ||
+							(event.key.keysym.scancode == SDL_SCANCODE_UNKNOWN &&
+							 event.key.keysym.sym == keysHeld[i]))
+						{
+							alreadyHeld = true;
+							break;
+						}
+					}
+					if (alreadyHeld) {
+						break;
+					}
+				}
+
 				// Handle Shift, CTRL, & Shift+CTRL combos
 				uint8_t table = 0;
 
@@ -1354,25 +1375,47 @@ static void FrameCallback(void)
 			}
 			else
 			{
-				// Handle key buffering 'key up' event (2 key rollover)
-				if ((keyDownCount == 1) && (event.key.keysym.sym == keysHeld[0]))
+				// Handle key buffering 'key up' event (2 key rollover).
+				// Match the physical key by scancode so consecutive keys (or
+				// keys with similar layout-dependent keycodes) cannot release
+				// the wrong entry. Fall back to keycode if SDL has no scancode.
+//				if ((keyDownCount == 1) && (event.key.keysym.sym == keysHeld[0]))
+				const bool releasedKey0 = keyDownCount > 0 &&
+					((event.key.keysym.scancode != SDL_SCANCODE_UNKNOWN &&
+					  event.key.keysym.scancode == keysHeldScancode[0]) ||
+					 (event.key.keysym.scancode == SDL_SCANCODE_UNKNOWN &&
+					  event.key.keysym.sym == keysHeld[0]));
+				const bool releasedKey1 = keyDownCount > 1 &&
+					((event.key.keysym.scancode != SDL_SCANCODE_UNKNOWN &&
+					  event.key.keysym.scancode == keysHeldScancode[1]) ||
+					 (event.key.keysym.scancode == SDL_SCANCODE_UNKNOWN &&
+					  event.key.keysym.sym == keysHeld[1]));
+
+				if (releasedKey0)
 				{
 					keyDownCount--;
-					keyDelay = 0;	// Reset key delay
-				}
-				else if (keyDownCount == 2)
-				{
-					if (event.key.keysym.sym == keysHeld[0])
+//					keyDelay = 0;	// Reset key delay
+//				}
+//				else if (keyDownCount == 2)
+//				{
+//					if (event.key.keysym.sym == keysHeld[0])
+					if (keyDownCount == 1)
 					{
-						keyDownCount--;
+//						keyDownCount--;
 						keysHeld[0] = keysHeld[1];
 						keysHeldScancode[0] = keysHeldScancode[1];
 						keysHeldAppleCode[0] = keysHeldAppleCode[1];
 					}
-					else if (event.key.keysym.sym == keysHeld[1])
-					{
-						keyDownCount--;
-					}
+//					else if (event.key.keysym.sym == keysHeld[1])
+//					{
+//						keyDownCount--;
+//					}
+					else
+						keyDelay = 0;	// Reset key delay when no keys remain
+				}
+				else if (releasedKey1)
+				{
+					keyDownCount--;
 				}
 			}
 
