@@ -1229,7 +1229,8 @@ bool InitVideo(void)
 		return false;
 	}
 
-	sdlWindow = SDL_CreateWindow("Apple2", settings.winX, settings.winY, VIRTUAL_SCREEN_WIDTH * 2, VIRTUAL_SCREEN_HEIGHT * 2, 0);
+//	sdlWindow = SDL_CreateWindow("Apple2", settings.winX, settings.winY, VIRTUAL_SCREEN_WIDTH * 2, VIRTUAL_SCREEN_HEIGHT * 2, 0);
+	sdlWindow = SDL_CreateWindow("Apple2", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, VIRTUAL_SCREEN_WIDTH * 2, VIRTUAL_SCREEN_HEIGHT * 2, 0);
 
 	if (sdlWindow == NULL)
 	{

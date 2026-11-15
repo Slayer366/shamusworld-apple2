@@ -11,10 +11,10 @@
 #include <errno.h>
 #include <map>
 #include <string>
-#include <SDL2/SDL.h>
+//#include <SDL2/SDL.h>
 #include "fileio.h"
 #include "log.h"
-#include "video.h"
+//#include "video.h"
 
 // Global variables
 
@@ -68,8 +68,8 @@ void LoadSettings(void)
 	settings.speakerVolume = GetPercentValue("speakerVolume", 75, 100);
 	settings.mockingboardVolume = GetPercentValue("mockingboardVolume", 100, 1000);
 
-	settings.winX = GetValue("windowX", 250);
-	settings.winY = GetValue("windowY", 100);
+//	settings.winX = GetValue("windowX", 250);
+//	settings.winY = GetValue("windowY", 100);
 
 //	strcpy(settings.BIOSPath, sdlemu_getval_string("BIOSROM", "./ROMs/apple2e-enhanced.rom"));
 	strcpy(settings.disksPath, GetValue("disks", "./disks/"));
@@ -92,7 +92,7 @@ void LoadSettings(void)
 //
 void SaveSettings(void)
 {
-	SDL_GetWindowPosition(sdlWindow, &settings.winX, &settings.winY);
+//	SDL_GetWindowPosition(sdlWindow, &settings.winX, &settings.winY);
 
 	SetValue("enhancedDiskSpeed", settings.enhancedDiskSpeed);
 	SetValue("speakerVolume", settings.speakerVolume);
@@ -106,8 +106,8 @@ void SaveSettings(void)
 	SetValue("useOpenGL", settings.useOpenGL);
 	SetValue("glFilterType", settings.glFilter);
 	SetValue("renderType", settings.renderType);
-	SetValue("windowX", settings.winX);
-	SetValue("windowY", settings.winY);
+//	SetValue("windowX", settings.winX);
+//	SetValue("windowY", settings.winY);
 	SetValue("disks", settings.disksPath);
 	SetValue("harddrive1", settings.hd[0]);
 	SetValue("harddrive2", settings.hd[1]);

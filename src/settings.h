@@ -36,7 +36,7 @@ struct Settings
 
 	// Window settings
 
-	int winX, winY;
+//	int winX, winY;
 
 	// Paths
 
