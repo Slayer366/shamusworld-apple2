@@ -1248,12 +1248,12 @@ static void FrameCallback(void)
 			{
 				floppyDrive[0].CreateBlankImage(1);
 				//	SpawnMessage("Image cleared...");
-			}//*/
-			/*else if (event.key.keysym.sym == SDLK_F10)
+			}
+			else if (event.key.keysym.sym == SDLK_F10)
 			{
 				floppyDrive[0].SwapImages();
 			//	SpawnMessage("Image swapped...");
-			}//*/
+			}
 			// Toggle the disassembly process
 			else if (event.key.keysym.sym == SDLK_F11)
 			{
@@ -1320,8 +1320,9 @@ static void FrameCallback(void)
 			custMouse.setPosition(event.motion.x, event.motion.y);
 
 			// Handle mouse showing when the mouse is hidden...
-			if (hideMouseTimeout == -1)
+			if (hideMouseTimeout == -1) {
 				SDL_ShowCursor(0);
+			}
 
 			hideMouseTimeout = 60;
 			break;

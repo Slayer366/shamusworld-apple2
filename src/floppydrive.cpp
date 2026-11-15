@@ -431,7 +431,9 @@ void FloppyDrive::SwapImages(void)
 	Swap(phase[0], phase[1]);
 	Swap(headPos[0], headPos[1]);
 	Swap(currentPos[0], currentPos[1]);
-SpawnMessage("Drive 0: %s...", imageName[0]);
+
+//	SpawnMessage("Drive 0: %s...", imageName[0]);
+	SpawnMessage("*** DISKS SWAPPED ***");
 }
 
 /*
