@@ -269,6 +269,12 @@ SDL_Texture * GUI::CreateTexture(SDL_Renderer * renderer, const void * source)
 
 void GUI::MouseDown(int32_t x, int32_t y, uint32_t buttons)
 {
+	if (DiskSelector::showWindow)
+	{
+		DiskSelector::MouseDown(x, y, buttons);
+		return;
+	}
+
 	DiskSelector::MouseDown(x, y, buttons);
 	Config::MouseDown(x, y, buttons);
 
