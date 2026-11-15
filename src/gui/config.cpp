@@ -12,10 +12,12 @@
 //#include "font10pt.h"
 #include "font13pt.h"
 #include "gui.h"
+#include "diskselector.h"
+#include "harddrive.h"
 #include "log.h"
 #include "settings.h"
 #include "video.h"
-
+#include "gfx/harddrive-icon.c"
 
 //#define C_WIDTH	402
 //#define C_HEIGHT	322
@@ -24,7 +26,19 @@
 #define C_XPOS		((VIRTUAL_SCREEN_WIDTH - C_WIDTH) / 2)
 #define C_YPOS		((VIRTUAL_SCREEN_HEIGHT - C_HEIGHT) / 2)
 
+#define HD_ICON_X		174
+#define HD_ICON_Y		210
+#define HD_ICON_W		52
+#define HD_ICON_H		64
+#define HD_EJECT_X		196
+#define HD_EJECT_Y		282
+#define HD_EJECT_HOT_X	190
+#define HD_EJECT_HOT_Y	278
+#define HD_EJECT_HOT_W	20
+#define HD_EJECT_HOT_H	16
+
 static SDL_Texture * window = NULL;
+static SDL_Texture * hardDriveIcon = NULL;
 //static uint32_t windowPixels[C_WIDTH * C_HEIGHT];
 static SDL_Texture * cardTex[3] = { 0 };
 static SDL_Texture * cardBay = NULL;
@@ -41,6 +55,8 @@ static bool refresh = false;
 //static bool cb4Checked = false;
 //static bool cbnChecked = false;
 //static char le1[512] = { 0 };
+static bool hardDriveHovered = false;
+static bool hardDriveEjectHovered = false;
 
 static const char cb1Text[] = "Automatically save state on exit";
 //static const char cb2Text[] = "Enable hard drive";
@@ -74,6 +90,15 @@ static const char cbUnchecked[(9 * 11) + 1] =
 	" @    @  "
 	" @    @  "
 	" @@@@@@  ";
+
+static const char ejectGlyph[(8 * 7) + 1] =
+	"   @@   "
+	"  @@@@  "
+	" @@@@@@ "
+	"@@@@@@@@"
+	"        "
+	"@@@@@@@@"
+	"@@@@@@@@";
 
 static const char slotNum[7][(5 * 5) + 1] =
 {
@@ -145,6 +170,8 @@ void Config::Init(SDL_Renderer * renderer)
 	if (SDL_SetTextureBlendMode(window, SDL_BLENDMODE_BLEND) == -1) {
 		WriteLog("GUI (Config): Could not set blend mode for window.\n");
 	}
+
+	hardDriveIcon = GUI::CreateTexture(renderer, &hard_drive_icon);
 
 	for(int t=0; t<3; t++)
 	{
@@ -222,14 +249,38 @@ void Config::ShowWindow(void)
 void Config::HideWindow(void)
 {
 	showWindow = false;
+	hardDriveHovered = false;
+	hardDriveEjectHovered = false;
 	refresh = true;
 }
 
 
 void Config::MouseDown(int32_t x, int32_t y, uint32_t buttons)
 {
-	if (!showWindow || !entered)
+	if (!showWindow || !entered) {
 		return;
+	}
+
+	int32_t nx = x - C_XPOS;
+	int32_t ny = y - C_YPOS;
+	if (HardDriveIsMounted()
+		&& nx >= HD_EJECT_HOT_X && nx < (HD_EJECT_HOT_X + HD_EJECT_HOT_W)
+		&& ny >= HD_EJECT_HOT_Y && ny < (HD_EJECT_HOT_Y + HD_EJECT_HOT_H))
+	{
+		EjectHardDrive();
+		SpawnMessage("*** HARD DRIVE EJECTED ***");
+		hardDriveEjectHovered = false;
+		refresh = true;
+		return;
+	}
+
+	if (nx >= (HD_ICON_X - 2) && nx < (HD_ICON_X + HD_ICON_W + 2)
+		&& ny >= (HD_ICON_Y - 2) && ny < (HD_ICON_Y + HD_ICON_H + 2))
+	{
+		HideWindow();
+		DiskSelector::ShowWindow(0, true);
+		return;
+	}
 
 	dragging = true;
 	std::vector<void *>::iterator i;
@@ -332,9 +383,9 @@ void Config::MouseMove(int32_t x, int32_t y, uint32_t buttons)
 
 	// Check to see if C has been hovered yet, and, if so, set a flag to show
 	// that it has
-	if (!entered && ((nx >= 0) && (nx <= C_WIDTH) && (ny >= 0)
-		&& (ny <= C_HEIGHT)))
+	if (!entered && ((nx >= 0) && (nx <= C_WIDTH) && (ny >= 0) && (ny <= C_HEIGHT))) {
 		entered = true;
+	}
 
 	// Check to see if the C, since being hovered, is now no longer being
 	// hovered
@@ -342,13 +393,49 @@ void Config::MouseMove(int32_t x, int32_t y, uint32_t buttons)
 	if (entered && ((nx < 0) || (nx > C_WIDTH) || (ny < 0) || (ny > C_HEIGHT)))
 	{
 		showWindow = false;
+		hardDriveHovered = false;
+		hardDriveEjectHovered = false;
 		refresh = true;
 		return;
 	}
 
 	// Bail out if the C hasn't been entered yet
-	if (!entered)
+	if (!entered) {
 		return;
+	}
+
+	bool oldHardDriveHovered = hardDriveHovered;
+	bool oldHardDriveEjectHovered = hardDriveEjectHovered;
+	hardDriveHovered = (nx >= (HD_ICON_X - 2) && nx < (HD_ICON_X + HD_ICON_W + 2)
+		&& ny >= (HD_ICON_Y - 2) && ny < (HD_ICON_Y + HD_ICON_H + 2));
+	hardDriveEjectHovered = HardDriveIsMounted()
+		&& nx >= HD_EJECT_HOT_X && nx < (HD_EJECT_HOT_X + HD_EJECT_HOT_W)
+		&& ny >= HD_EJECT_HOT_Y && ny < (HD_EJECT_HOT_Y + HD_EJECT_HOT_H);
+
+	if (!oldHardDriveHovered && hardDriveHovered) {
+		const char *imageName = HardDriveGetImageName();
+		if (imageName) {
+			char displayName[256];
+				size_t len = strlen(imageName);
+				if (len >= sizeof(displayName)) {
+					len = sizeof(displayName) - 1;
+				}
+				memcpy(displayName, imageName, len);
+				displayName[len] = '\0';
+
+				char *extension = strrchr(displayName, '.');
+				if (extension && extension != displayName) {
+					*extension = '\0';
+				}
+				SpawnMessage("%s", displayName);
+		} else {
+			SpawnMessage("Insert hard disk image into HDD #1");
+		}
+	}
+
+	if (oldHardDriveHovered != hardDriveHovered || oldHardDriveEjectHovered != hardDriveEjectHovered) {
+		refresh = true;
+	}
 
 	std::vector<void *>::iterator i;
 
@@ -519,6 +606,22 @@ void Config::DrawElements(SDL_Renderer * renderer)
 			break;
 		}
 	}
+
+	// Hard-drive icon, centered at the bottom of the config window.
+	if (hardDriveIcon) {
+		SDL_Rect driveRect = { HD_ICON_X, HD_ICON_Y, HD_ICON_W, HD_ICON_H };
+		SDL_RenderCopy(renderer, hardDriveIcon, NULL, &driveRect);
+		if (hardDriveHovered) {
+			GUI::DrawBox(renderer, HD_ICON_X - 2, HD_ICON_Y - 2, HD_ICON_W + 4, HD_ICON_H + 4, 0x20, 0xFF, 0x20);
+		}
+	}
+
+	if (HardDriveIsMounted()) {
+		GUI::DrawCharArray(renderer, ejectGlyph, HD_EJECT_X, HD_EJECT_Y,
+			8, 7, hardDriveEjectHovered ? 0x20 : 0x00,
+			hardDriveEjectHovered ? 0xFF : 0xAA,
+			hardDriveEjectHovered ? 0x20 : 0x00);
+	}
 }
 
 
@@ -539,4 +642,3 @@ void Config::Render(SDL_Renderer * renderer)
 	SDL_Rect dst = { C_XPOS, C_YPOS, C_WIDTH, C_HEIGHT };
 	SDL_RenderCopy(renderer, window, NULL, &dst);
 }
-

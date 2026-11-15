@@ -15,14 +15,14 @@
 
 #include "harddrive.h"
 #include "apple2.h"
-#include "dis65c02.h"
+//#include "dis65c02.h"
 #include "fileio.h"
 #include "firmware/a2hs-scsi.h"
 #include "log.h"
 #include "mmu.h"
 #include "settings.h"
-#include "v65c02.h"		// For dumpDis...
-#include <vector>
+//#include "v65c02.h"		// For dumpDis...
+//#include <vector>
 
 
 static uint8_t romBank = 0;
@@ -98,6 +98,7 @@ static uint32_t hdSize = 0;
 static uint32_t hdDataOffset = 0;
 static FILE * hdFile = NULL;
 static bool hdWritable = false;
+static char hdImageName[(MAX_PATH * 2) + 2] = { 0 };
 
 
 static uint32_t ReadLE32(const uint8_t *p)
@@ -115,12 +116,14 @@ static uint16_t ReadLE16(const uint8_t *p)
 
 static bool LoadHardDriveImage(const char *filename)
 {
+/*
 	if (hdFile) {
 		fclose(hdFile);
 		hdFile = NULL;
 	}
 	hdWritable = false;
 	hdSize = hdDataOffset = 0;
+*/
 	bool canWrite = false;
 
 	FILE *fp = fopen(filename, "rb+");
@@ -190,10 +193,15 @@ static bool LoadHardDriveImage(const char *filename)
 		}
 	}
 
+	if (hdFile) {
+		fclose(hdFile);
+	}
+
 	hdSize = length;
 	hdDataOffset = offset;
 	hdWritable = canWrite && !imageReadOnly;
 	hdFile = fp;
+	snprintf(hdImageName, sizeof(hdImageName), "%s", filename);
 
 	WriteLog("HD: Image data offset $%X, length $%X, %u blocks%s.\n",
 		hdDataOffset, hdSize, hdSize / 512,
@@ -1007,8 +1015,9 @@ bool InstallHardDrive(uint8_t slot, const char *imageOverride, bool suppressConf
 
 	const char *configuredImage = settings.hd[0];
 
-	if (!imageOverride && settings.hd[1][0])
+	if (!imageOverride && settings.hd[1][0]) {
 		WriteLog("HD: harddrive2 ('%s') is configured, but a second hard drive is not emulated yet; ignoring it.\n", settings.hd[1]);
+	}
 
 	const char *imageName = imageOverride ? imageOverride : configuredImage;
 	if (!imageName || !imageName[0]) {
@@ -1030,7 +1039,82 @@ bool InstallHardDrive(uint8_t slot, const char *imageOverride, bool suppressConf
 	}
 
 	WriteLog("HD: Loaded '%s', %u bytes (%u blocks).\n", filename, hdSize, hdSize / 512);
+
+	const char *displayName = strrchr(filename, '/');
+	const char *backslash = strrchr(filename, '\\');
+	if (!displayName || (backslash && backslash > displayName)) {
+		displayName = backslash;
+	}
+	displayName = displayName ? displayName + 1 : filename;
+	snprintf(hdImageName, sizeof(hdImageName), "%s", displayName);
+
+	// A runtime mount starts with a clean SCSI transaction state.
+	devMode = DVM_BUS_FREE;
+	cmdLength = 0;
+	bytesToSend = bufPtr = 0;
+	buf = NULL;
+	response = senseKey = senseASC = senseASCQ = 0;
+	activeLBA = 0;
+	activeWrite = false;
+	BSY = ATN = SEL = ACK = RST = MSG = C_D = I_O = REQ = DEV_BSY = DRQ = DACK = false;
+	selectWaitSeen = false;
+
 	SlotData hd = { SlotIOR, SlotIOW, SlotROM, 0, SlotIOExtraR, SlotIOExtraW };
 	InstallSlotHandler(slot, &hd);
 	return true;
+}
+
+
+void EjectHardDrive(void)
+{
+	if (hdFile) {
+		fclose(hdFile);
+		hdFile = NULL;
+	}
+
+	hdWritable = false;
+	hdSize = 0;
+	hdDataOffset = 0;
+	hdImageName[0] = '\0';
+
+	// Abort any in-flight transfer without uninstalling the SCSI card from
+	// the MMU. The installed card remains available and reports no medium.
+	devMode = DVM_BUS_FREE;
+	DEV_BSY = false;
+	BSY = ATN = SEL = ACK = false;
+	MSG = C_D = I_O = false;
+	REQ = DRQ = DACK = false;
+//	RST = false; 
+//	activeLBA = 0;
+	buf = NULL;
+	bufPtr = 0;
+	bytesToSend = 0;
+	activeWrite = false;
+	cmdLength = 0;
+	response = senseKey = senseASC = senseASCQ = 0;
+	selectWaitSeen = false;
+	WriteLog("HD: Ejected hard drive image. SCSI card remains installed.\n");
+}
+
+
+bool HardDriveIsMounted(void)
+{
+	return hdFile != NULL;
+}
+
+
+const char *HardDriveGetImageName(void)
+{
+	if (!hdFile || !hdImageName[0]) {
+		return NULL;
+	}
+
+	const char *name = strrchr(hdImageName, '/');
+	const char *backslash = strrchr(hdImageName, '\\');
+	if (backslash && (!name || backslash > name)) {
+		name = backslash;
+	}
+
+//	return hdImageName[0] ? hdImageName : NULL;
+	return name ? name + 1 : hdImageName;
 }

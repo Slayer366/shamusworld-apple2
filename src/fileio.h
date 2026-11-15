@@ -1,7 +1,7 @@
 #ifndef __FILEIO_H__
 #define __FILEIO_H__
 
-#include <SDL.h>
+#include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdint.h>
 

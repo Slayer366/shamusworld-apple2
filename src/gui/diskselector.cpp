@@ -20,15 +20,18 @@
 #include "diskselector.h"
 #include <dirent.h>
 #include <algorithm>
+#include <math.h>
 #include <string>
 #include <vector>
 #include "crc32.h"
 #include "fileio.h"
 #include "floppydrive.h"
+#include "harddrive.h"
 //#include "font10pt.h"
 #include "font13pt.h"
 #include "gui.h"
 #include "log.h"
+#include "mmu.h"
 #include "settings.h"
 #include "video.h"
 
@@ -57,6 +60,7 @@ enum { DSS_SHOWING, DSS_HIDING, DSS_SHOWN, DSS_HIDDEN, DSS_LSB_SHOWING, DSS_LSB_
 
 static bool entered = false;
 static int driveNumber;
+static bool hardDriveMode = false;
 static int diskSelectorState = DSS_HIDDEN;
 static int diskSelected = -1;
 static int lastDiskSelected = -1;
@@ -119,6 +123,12 @@ SDL_Texture * scrollRightIcon = NULL;
 bool DiskSelector::showWindow = false;
 std::vector<FileStruct> fsList;
 std::vector<FileStruct> hdList;
+
+
+static std::vector<FileStruct> &ActiveFiles(void)
+{
+	return hardDriveMode ? hdList : fsList;
+}
 
 
 void DiskSelector::Init(SDL_Renderer * renderer)
@@ -379,6 +389,7 @@ void DiskSelector::FindHardDisks(void)
 	hdList.clear();
 	FindHardDisks(settings.disksPath);
 	std::sort(hdList.begin(), hdList.end(), FileStruct());
+	numColumns = (int)ceilf((float)hdList.size() / 27.0f);
 	WriteLog("GUI (DiskSelector)::FindHardDisks(): # of HDs is %i\n", hdList.size());
 }
 
@@ -468,10 +479,13 @@ void DiskSelector::DrawFilenames(SDL_Renderer * renderer)
 //			for(unsigned int i=22+textScrollCount, x=0; i<21; i++, x++)
 			for(unsigned int i=19+textScrollCount, x=0; i<19; i++, x++)
 			{
-				if (i >= fsList[partialColStart + y].image.length())
+//				if (i >= fsList[partialColStart + y].image.length()) {
+				if (i >= ActiveFiles()[partialColStart + y].image.length()) {
 					break;
+				}
 
-				GUI::DrawCharacter(renderer, x + 1, y + 1, fsList[partialColStart + y].image[i], false);
+//				GUI::DrawCharacter(renderer, x + 1, y + 1, fsList[partialColStart + y].image[i], false);
+				GUI::DrawCharacter(renderer, x + 1, y + 1, ActiveFiles()[partialColStart + y].image[i], false);
 			}
 		}
 	}
@@ -485,17 +499,21 @@ void DiskSelector::DrawFilenames(SDL_Renderer * renderer)
 //			for(unsigned int i=textScrollCount, x=0; i<21; i++, x++)
 			for(unsigned int i=textScrollCount, x=0; i<19; i++, x++)
 			{
-				if (i >= fsList[fsStart + y].image.length())
+//				if (i >= fsList[fsStart + y].image.length()) {
+				if (i >= ActiveFiles()[fsStart + y].image.length()) {
 					break;
+				}
 
-				GUI::DrawCharacter(renderer, x + 1, y + 1, fsList[fsStart + y].image[i], false);
+//				GUI::DrawCharacter(renderer, x + 1, y + 1, fsList[fsStart + y].image[i], false);
+				GUI::DrawCharacter(renderer, x + 1, y + 1, ActiveFiles()[fsStart + y].image[i], false);
 			}
 		}
 
 		fsStart += 27;
 	}
 
-	while (fsStart < fsList.size())
+//	while (fsStart < fsList.size())
+	while (fsStart < ActiveFiles().size())
 	{
 //		int currentX = (count / 18) * 17;
 //		int currentY = (count % 18);
@@ -510,20 +528,24 @@ void DiskSelector::DrawFilenames(SDL_Renderer * renderer)
 //		for(unsigned int i=0; i<21; i++)
 		for(unsigned int i=0; i<19; i++)
 		{
-			if (i >= fsList[fsStart].image.length())
+//			if (i >= fsList[fsStart].image.length()) {
+			if (i >= ActiveFiles()[fsStart].image.length()) {
 				break;
+			}
 
 			bool invert = (diskSelected == (int)fsStart ? true : false);
-			GUI::DrawCharacter(renderer, currentX + i + 1 + offset, currentY + 1, fsList[fsStart].image[i], invert);
+//			GUI::DrawCharacter(renderer, currentX + i + 1 + offset, currentY + 1, fsList[fsStart].image[i], invert);
+			GUI::DrawCharacter(renderer, currentX + i + 1 + offset, currentY + 1, ActiveFiles()[fsStart].image[i], invert);
 		}
 
 		count++;
 		fsStart++;
 
-//		if (count >= (18 * 3))
-//		if (count >= (24 * 3))
-		if (count >= (27 * 3))
+//		if (count >= (18 * 3)) {
+//		if (count >= (24 * 3)) {
+		if (count >= (27 * 3)) {
 			break;
+		}
 	}
 
 	// If a disk is selected, show it on the top line in inverse video
@@ -531,10 +553,13 @@ void DiskSelector::DrawFilenames(SDL_Renderer * renderer)
 	{
 		for(unsigned int i=0; i<65; i++)
 		{
-			if (i >= fsList[diskSelected].image.length())
+//			if (i >= fsList[diskSelected].image.length()) {
+			if (i >= ActiveFiles()[diskSelected].image.length()) {
 				break;
+			}
 
-			GUI::DrawCharacter(renderer, i + 1, 0, fsList[diskSelected].image[i], true);
+//			GUI::DrawCharacter(renderer, i + 1, 0, fsList[diskSelected].image[i], true);
+			GUI::DrawCharacter(renderer, i + 1, 0, ActiveFiles()[diskSelected].image[i], true);
 		}
 	}
 
@@ -543,12 +568,25 @@ void DiskSelector::DrawFilenames(SDL_Renderer * renderer)
 }
 
 
-void DiskSelector::ShowWindow(int drive)
+//void DiskSelector::ShowWindow(int drive)
+void DiskSelector::ShowWindow(int drive, bool hardDrive)
 {
 	diskSelectorState = DSS_SHOWN;
 	entered = false;
 	showWindow = true;
 	driveNumber = drive;
+	hardDriveMode = hardDrive;
+
+	if (hardDriveMode) {
+		FindHardDisks();
+	} else {
+		FindDisks();
+	}
+
+	colStart = 0;
+	diskSelected = lastDiskSelected = -1;
+	textScrollCount = 0;
+	refresh = true;
 }
 
 
@@ -566,8 +604,9 @@ void DiskSelector::HideWindow(void)
 
 void DiskSelector::MouseDown(int32_t x, int32_t y, uint32_t buttons)
 {
-	if (!showWindow || !entered)
+	if (!showWindow || !entered) {
 		return;
+	}
 
 	if ((diskSelectorState == DSS_LSB_SHOWING) || (diskSelectorState == DSS_LSB_SHOWN))
 	{
@@ -598,20 +637,34 @@ void DiskSelector::MouseDown(int32_t x, int32_t y, uint32_t buttons)
 		return;
 	}
 
-	if (diskSelected != -1)
+//	if (diskSelected != -1)
+	if (diskSelected >= 0 && diskSelected < (int)ActiveFiles().size())
 	{
-		floppyDrive[0].LoadImage(fsList[diskSelected].fullPath.c_str(), driveNumber);
+//		floppyDrive[0].LoadImage(fsList[diskSelected].fullPath.c_str(), driveNumber);
+		const FileStruct &selected = ActiveFiles()[diskSelected];
+
+		if (hardDriveMode) {
+			if (InstallHardDrive(SLOT7, selected.fullPath.c_str(), false)) {
+				SpawnMessage("*** HARD DRIVE: %s ***", selected.image.c_str());
+			} else {
+				SpawnMessage("*** HARD DRIVE LOAD FAILED ***");
+				return;
+			}
+		} else {
+			floppyDrive[0].LoadImage(selected.fullPath.c_str(), driveNumber);
+			SpawnMessage("*** DISK: %s ***", selected.image.c_str());
+		}
 	}
 
-	showWindow = false;
+	HideWindow();
 }
 
 
 void DiskSelector::MouseUp(int32_t x, int32_t y, uint32_t buttons)
 {
-	if (!showWindow)
+	if (!showWindow) {
 		return;
-
+	}
 }
 
 static bool DrawSelection(SDL_Renderer * renderer, int oldSelection, int newSelection);
@@ -703,7 +756,8 @@ states:
 	diskSelected = ((xChar / 20) * 27) + yChar + (colStart * 27);
 
 	if ((yChar < 0) || (yChar >= 27)
-		|| (diskSelected >= (int)fsList.size())
+/*		|| (diskSelected >= (int)fsList.size()) */
+		|| (diskSelected >= (int)ActiveFiles().size())
 		|| (diskSelectorState == DSS_LSB_SHOWING)
 		|| (diskSelectorState == DSS_LSB_SHOWN)
 		|| (diskSelectorState == DSS_RSB_SHOWING)
@@ -791,7 +845,8 @@ static bool DrawSelection(SDL_Renderer * renderer, int oldSelection, int newSele
 	for (int i = 0; i < 2; ++i)
 	{
 		int selection = selections[i];
-		if ((selection < 0) || (selection >= (int)fsList.size())) {
+//		if ((selection < 0) || (selection >= (int)fsList.size())) {
+		if ((selection < 0) || (selection >= (int)ActiveFiles().size())) {
 			continue;
 		}
 
@@ -829,7 +884,8 @@ static bool DrawSelection(SDL_Renderer * renderer, int oldSelection, int newSele
 
 		int column = relativeIndex / 27;
 		int row = relativeIndex % 27;
-		const std::string &name = fsList[selection].image;
+//		const std::string &name = fsList[selection].image;
+		const std::string &name = ActiveFiles()[selection].image;
 //		for (unsigned int ch = 0; ch < 21 && ch < name.length(); ++ch)
 //			GUI::DrawCharacter(renderer, column * 22 + ch + 1, row + 1,
 		for (unsigned int ch = 0; ch < 19 && ch < name.length(); ++ch)
@@ -837,9 +893,11 @@ static bool DrawSelection(SDL_Renderer * renderer, int oldSelection, int newSele
 				name[ch], selection == newSelection);
 	}
 
-	if (newSelection >= 0 && newSelection < (int)fsList.size())
+//	if (newSelection >= 0 && newSelection < (int)fsList.size())
+	if (newSelection >= 0 && newSelection < (int)ActiveFiles().size())
 	{
-		const std::string &name = fsList[newSelection].image;
+//		const std::string &name = fsList[newSelection].image;
+		const std::string &name = ActiveFiles()[newSelection].image;
 		for (unsigned int ch = 0; ch < 65 && ch < name.length(); ++ch)
 			GUI::DrawCharacter(renderer, ch + 1, 0, name[ch], true);
 	}

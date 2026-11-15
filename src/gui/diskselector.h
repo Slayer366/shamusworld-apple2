@@ -23,7 +23,8 @@ class DiskSelector
 		static void FindHardDisks();
 		static void FindHardDisks(const char *);
 		static void DrawFilenames(SDL_Renderer *);
-		static void ShowWindow(int);
+//		static void ShowWindow(int);
+		static void ShowWindow(int, bool hardDrive = false);
 		static void HideWindow(void);
 		static void MouseDown(int32_t, int32_t, uint32_t);
 		static void MouseUp(int32_t, int32_t, uint32_t);
