@@ -480,7 +480,8 @@ void DiskSelector::DrawFilenames(SDL_Renderer * renderer)
 			for(unsigned int i=19+textScrollCount, x=0; i<19; i++, x++)
 			{
 //				if (i >= fsList[partialColStart + y].image.length()) {
-				if (i >= ActiveFiles()[partialColStart + y].image.length()) {
+				if ((unsigned int)(partialColStart + y) >= ActiveFiles().size() ||
+					i >= ActiveFiles()[partialColStart + y].image.length()) {
 					break;
 				}
 
@@ -500,7 +501,8 @@ void DiskSelector::DrawFilenames(SDL_Renderer * renderer)
 			for(unsigned int i=textScrollCount, x=0; i<19; i++, x++)
 			{
 //				if (i >= fsList[fsStart + y].image.length()) {
-				if (i >= ActiveFiles()[fsStart + y].image.length()) {
+				if ((fsStart + y) >= ActiveFiles().size() ||
+					i >= ActiveFiles()[fsStart + y].image.length()) {
 					break;
 				}
 
