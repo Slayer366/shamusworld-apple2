@@ -197,10 +197,11 @@ bool IsHostKeyHeld(void)
 // (decompression, relocation...) is sped up too.
 enum
 {
-	TB_NONE = 0,		// Turbo allowed
-	TB_DISABLED,		// Turned off in the settings
+	TB_NONE = 0,			// Turbo allowed
+	TB_DISABLED,			// Turned off in the settings
 	TB_MOTOR_OFF,
-	TB_NO_DISK,			// Nothing in the drive to speed up
+	TB_NO_DISK,				// Nothing in the drive to speed up
+	TB_NOT_ACCESSED,	// Don't start turbo just because a disk was inserted
 	TB_SPEAKER,
 	TB_MOCKINGBOARD,
 	TB_INTERRUPTED,		// main() wants the CPU thread to park
@@ -212,13 +213,16 @@ static const char * turboBlockerName[TB_COUNT] = {
 	"disabled in settings",
 	"drive motor off",
 	"no disk in drive",
+	"disk not recently accessed",
 	"speaker active",
 	"Mockingboard active",
 	"interrupted"
 };
 
-static int DiskTurboBlocker(void)
+static int DiskTurboBlocker(bool turboSessionActive, bool &floppySessionQualified)
 {
+	floppySessionQualified = false;
+
 	if (!settings.enhancedDiskSpeed) {
 		return TB_DISABLED;
 	}
@@ -238,6 +242,19 @@ static int DiskTurboBlocker(void)
 		return TB_NO_DISK;
 	}
 
+	// Starting turbo requires an actual disk access with the motor running.
+	if (!turboSessionActive) {
+		if (!floppyDrive[0].IsMotorOn()) {
+			return TB_MOTOR_OFF;
+		}
+		if (!floppyDrive[0].RecentlyAccessed(255121ULL)) {
+			return TB_NOT_ACCESSED;
+		}
+	}
+
+	// The floppy has satisfied the start/continue conditions.
+	floppySessionQualified = true;
+
 	if (SpeakerIsActive()) {
 		return TB_SPEAKER;
 	}
@@ -253,6 +270,7 @@ int CPUThreadFunc(void * data)
 {
 	bool haveToken = false;				// True while we hold mainSem across turbo frames
 	bool turboWasOn = false;
+	bool turboSessionActive = false;	// Set by real floppy access; survives temporary blockers
 	uint64_t turboStartClock = 0;
 	uint64_t turboStartTicks = 0;
 	uint32_t turboLogCount = 0;
@@ -371,7 +389,16 @@ VC, from line 0-5 and 198-261 is the VBL interval, with vertical retrace occurin
 
 		// Decide whether the NEXT frame runs in disk turbo.  main() can force us
 		// out of it (cpuInterrupt) before it freezes or stops the CPU thread.
-		int blocker = DiskTurboBlocker();
+		bool floppySessionQualified = false;
+		int blocker = DiskTurboBlocker(turboSessionActive, floppySessionQualified);
+
+		// A qualified floppy session survives temporary audio blockers and
+		// CPU-thread interruptions.
+		if (floppySessionQualified) {
+			turboSessionActive = true;
+		} else if (blocker == TB_DISABLED || blocker == TB_MOTOR_OFF || blocker == TB_NO_DISK) {
+			turboSessionActive = false;
+		}
 
 		if ((blocker == TB_NONE) && (cpuInterrupt || cpuFinished)) {
 			blocker = TB_INTERRUPTED;
