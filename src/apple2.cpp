@@ -109,7 +109,8 @@ static uint64_t startTicks;
 static bool pauseMode = false;
 static bool fullscreenDebounce = false;
 static bool resetKeyDown = false;
-static int8_t hideMouseTimeout = 60;
+//static int8_t hideMouseTimeout = 60;
+static int16_t hideMouseTimeout = 360;
 
 // Vars to handle the //e's 2-key rollover
 static SDL_Keycode keysHeld[2];
@@ -1320,11 +1321,12 @@ static void FrameCallback(void)
 			custMouse.setPosition(event.motion.x, event.motion.y);
 
 			// Handle mouse showing when the mouse is hidden...
-			if (hideMouseTimeout == -1) {
-				SDL_ShowCursor(0);
-			}
+//			if (hideMouseTimeout == -1) {
+//				SDL_ShowCursor(0);
+//			}
 
-			hideMouseTimeout = 60;
+//			hideMouseTimeout = 60;
+			hideMouseTimeout = 360;
 			break;
 
 		case SDL_WINDOWEVENT:
@@ -1340,13 +1342,14 @@ static void FrameCallback(void)
 
 	// Hide the mouse if it's been 1s since the last time it was moved
 	// N.B.: Should disable mouse hiding if it's over the GUI...
-	if ((hideMouseTimeout > 0) && !(GUI::sidebarState == SBS_SHOWN || DiskSelector::showWindow == true || Config::showWindow == true))
+	if ((hideMouseTimeout > 0) && !(GUI::sidebarState == SBS_SHOWN || DiskSelector::showWindow == true || Config::showWindow == true)) {
 		hideMouseTimeout--;
-	else if (hideMouseTimeout == 0)
-	{
-		hideMouseTimeout--;
-		SDL_ShowCursor(0);
 	}
+//	else if (hideMouseTimeout == 0)
+//	{
+//		hideMouseTimeout--;
+//		SDL_ShowCursor(0);
+//	}
 
 	// Stuff the Apple keyboard buffer, if any keys are pending
 	// N.B.: May have to simulate the key repeat delay too [yup, sure do]
@@ -1397,7 +1400,9 @@ static void FrameCallback(void)
 	// Render the Apple screen + GUI overlay
 	RenderAppleScreen(sdlRenderer);
 	GUI::Render(sdlRenderer);
-	custMouse.draw(sdlRenderer);
+	if (hideMouseTimeout > 0) {
+		custMouse.draw(sdlRenderer);
+	}
 	SDL_RenderPresent(sdlRenderer);
 //	SetCallbackTime(FrameCallback, 16666.66666667);
 	SetCallbackTime(FrameCallback, 16688.154500083);
