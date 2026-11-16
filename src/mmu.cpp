@@ -324,28 +324,45 @@ void SetupAddressMap(void)
 //
 // Reset the MMU state after a power down event
 //
-void ResetMMUPointers(void)
+
+// Recompute the main-RAM bank pointers from the current soft switch state.  Every
+// handler that can change the answer calls this, so the pointers can never go stale.
+//
+// Apple //e rules for $0200-$BFFF: RAMRD/RAMWRT choose main or aux RAM for reads/writes.
+// If 80STORE is on, PAGE2 overrides that for the text page ($0400-$07FF); and if HIRES
+// is also on, for the hi-res page ($2000-$3FFF) as well.  With HIRES off, $2000-$3FFF
+// still follows RAMRD/RAMWRT.
+static void UpdateBankPointers(void)
 {
+	mainMemoryR = (ramrd ? &ram2[0x0200] : &ram[0x0200]);
+	mainMemoryW = (ramwrt ? &ram2[0x0200] : &ram[0x0200]);
+
 	if (store80Mode)
 	{
 		mainMemoryTextR = (displayPage2 ? &ram2[0x0400] : &ram[0x0400]);
 		mainMemoryTextW = (displayPage2 ? &ram2[0x0400] : &ram[0x0400]);
+	}
+	else
+	{
+		mainMemoryTextR = (ramrd ? &ram2[0x0400] : &ram[0x0400]);
+		mainMemoryTextW = (ramwrt ? &ram2[0x0400] : &ram[0x0400]);
+	}
+
+	if (store80Mode && hiRes)
+	{
 		mainMemoryHGRR = (displayPage2 ? &ram2[0x2000] : &ram[0x2000]);
 		mainMemoryHGRW = (displayPage2 ? &ram2[0x2000] : &ram[0x2000]);
 	}
 	else
 	{
-// Shouldn't mainMemoryTextR depend on ramrd???  (I think it should...)
-		mainMemoryTextR = (ramrd ? &ram2[0x0400] : &ram[0x0400]);
-		mainMemoryTextW = (ramwrt ? &ram2[0x0400] : &ram[0x0400]);
 		mainMemoryHGRR = (ramrd ? &ram2[0x2000] : &ram[0x2000]);
 		mainMemoryHGRW = (ramwrt ? &ram2[0x2000] : &ram[0x2000]);
 	}
+}
 
-	mainMemoryR = (ramrd ? &ram2[0x0200] : &ram[0x0200]);
-	mainMemoryW = (ramwrt ?  &ram2[0x0200] : &ram[0x0200]);
-//	mainMemoryHGRR = (ramrd ? &ram2[0x2000] : &ram[0x2000]);
-//	mainMemoryHGRW = (ramwrt ? &ram2[0x2000] : &ram[0x2000]);
+void ResetMMUPointers(void)
+{
+	UpdateBankPointers();
 
 //	slot6Memory = (intCXROM ? &rom[0xC600] : &diskROM[0]);
 //	slot3Memory = (slotC3ROM ? &rom[0] : &rom[0xC300]);
@@ -593,48 +610,19 @@ void Switch80STORE(uint16_t address, uint8_t)
 {
 	store80Mode = (bool)(address & 0x01);
 //WriteLog("Setting 80STORE to %s...\n", (store80Mode ? "ON" : "off"));
-
-	// It seems this affects more than just the text RAM, it also seems to affect the graphics RAM as well...
-	if (store80Mode)
-	{
-		mainMemoryTextR = (displayPage2 ? &ram2[0x0400] : &ram[0x0400]);
-		mainMemoryTextW = (displayPage2 ? &ram2[0x0400] : &ram[0x0400]);
-		mainMemoryHGRR = (displayPage2 ? &ram2[0x2000] : &ram[0x2000]);
-		mainMemoryHGRW = (displayPage2 ? &ram2[0x2000] : &ram[0x2000]);
-	}
-	else
-	{
-		mainMemoryTextR = (ramrd ? &ram2[0x0400] : &ram[0x0400]);
-		mainMemoryTextW = (ramwrt ? &ram2[0x0400] : &ram[0x0400]);
-		mainMemoryHGRR = (ramrd ? &ram2[0x2000] : &ram[0x2000]);
-		mainMemoryHGRW = (ramwrt ? &ram2[0x2000] : &ram[0x2000]);
-	}
+	UpdateBankPointers();
 }
 
 void SwitchRAMRD(uint16_t address, uint8_t)
 {
 	ramrd = (bool)(address & 0x01);
-	mainMemoryR = (ramrd ? &ram2[0x0200] : &ram[0x0200]);
-//	mainMemoryHGRR = (ramrd ? &ram2[0x2000] : &ram[0x2000]);
-
-	if (store80Mode)
-		return;
-
-	mainMemoryTextR = (ramrd ? &ram2[0x0400] : &ram[0x0400]);
-	mainMemoryHGRR = (ramrd ? &ram2[0x2000] : &ram[0x2000]);
+	UpdateBankPointers();
 }
 
 void SwitchRAMWRT(uint16_t address, uint8_t)
 {
 	ramwrt = (bool)(address & 0x01);
-	mainMemoryW = (ramwrt ?  &ram2[0x0200] : &ram[0x0200]);
-//	mainMemoryHGRW = (ramwrt ? &ram2[0x2000] : &ram[0x2000]);
-
-	if (store80Mode)
-		return;
-
-	mainMemoryTextW = (ramwrt ? &ram2[0x0400] : &ram[0x0400]);
-	mainMemoryHGRW = (ramwrt ? &ram2[0x2000] : &ram[0x2000]);
+	UpdateBankPointers();
 }
 
 //
@@ -972,16 +960,8 @@ uint8_t SwitchPAGE2R(uint16_t address)
 //WriteLog("Setting PAGE2 to %s...\n", (address & 0x01 ? "ON" : "off"));
 	displayPage2 = (bool)(address & 0x01);
 
-	if (store80Mode)
-	{
-		mainMemoryTextR = (displayPage2 ? &ram2[0x0400] : &ram[0x0400]);
-		mainMemoryTextW = (displayPage2 ? &ram2[0x0400] : &ram[0x0400]);
-
-		if (hiRes)
-		{
-			mainMemoryHGRR = (displayPage2 ? &ram2[0x2000] : &ram[0x2000]);
-			mainMemoryHGRW = (displayPage2 ? &ram2[0x2000] : &ram[0x2000]);
-		}
+	if (store80Mode) {
+		UpdateBankPointers();
 	}
 
 	// Seems this is needed for some things...
@@ -993,16 +973,8 @@ void SwitchPAGE2W(uint16_t address, uint8_t)
 //WriteLog("Setting PAGE2 to %s...\n", (address & 0x01 ? "ON" : "off"));
 	displayPage2 = (bool)(address & 0x01);
 
-	if (store80Mode)
-	{
-		mainMemoryTextR = (displayPage2 ? &ram2[0x0400] : &ram[0x0400]);
-		mainMemoryTextW = (displayPage2 ? &ram2[0x0400] : &ram[0x0400]);
-
-		if (hiRes)
-		{
-			mainMemoryHGRR = (displayPage2 ? &ram2[0x2000] : &ram[0x2000]);
-			mainMemoryHGRW = (displayPage2 ? &ram2[0x2000] : &ram[0x2000]);
-		}
+	if (store80Mode) {
+		UpdateBankPointers();
 	}
 }
 
@@ -1010,7 +982,12 @@ uint8_t SwitchHIRESR(uint16_t address)
 {
 WriteLog("Setting HIRES to %s...\n", (address & 0x01 ? "ON" : "off"));
 	hiRes = (bool)(address & 0x01);
-//	return 0;
+
+	// HIRES decides whether PAGE2 overrides RAMRD/RAMWRT for $2000-$3FFF (when 80STORE is on)
+	if (store80Mode) {
+		UpdateBankPointers();
+	}
+
 	// Seems this is needed for some things...
 	return ReadFloatingBus(0);
 }
@@ -1019,6 +996,10 @@ void SwitchHIRESW(uint16_t address, uint8_t)
 {
 WriteLog("Setting HIRES to %s...\n", (address & 0x01 ? "ON" : "off"));
 	hiRes = (bool)(address & 0x01);
+
+	if (store80Mode) {
+		UpdateBankPointers();
+	}
 }
 
 uint8_t SwitchDHIRESR(uint16_t address)
