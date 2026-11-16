@@ -59,7 +59,7 @@ class FloppyDrive
 		bool IsMotorOn(void) const { return motorOn != 0; }
 		// Disk turbo support: is there an image in the active drive, and has the
 		// CPU touched the disk (data register or head stepper) within 'window' cycles?
-		bool HasDisk(void) const { return diskImageReady && (diskType[activeDrive] != DT_EMPTY); }
+		bool HasDisk(void) const { return (activeDrive < 2) && diskImageReady && (diskType[activeDrive] != DT_EMPTY) && (diskType[activeDrive] != DFT_UNKNOWN); }
 		bool RecentlyAccessed(uint64_t window) const;
 
 		void DriveEnable(uint8_t addr);
@@ -70,9 +70,9 @@ class FloppyDrive
 		void RunSequencer(uint32_t);
 
 	protected:
-		void DetectImageType(const char * filename, uint8_t driveNum, bool forceDOS33 = false, uint8_t volume = 0xFE);
+		bool DetectImageType(const char * filename, uint8_t driveNum, bool forceDOS33 = false, uint8_t volume = 0xFE);
 		void WriteBits(uint8_t * dest, const uint8_t * src, uint16_t bits, uint16_t * start);
-		void WOZifyImage(uint8_t driveNum, uint8_t volume = 0xFE);
+		bool WOZifyImage(uint8_t driveNum, uint8_t volume = 0xFE);
 
 	private:
 		char imageName[2][MAX_PATH];
@@ -104,7 +104,7 @@ class FloppyDrive
 		uint8_t sequencerState;
 		uint32_t driveOffTimeout;
 		uint8_t zeroBitCount;
-		uint16_t trackLength[2];
+		uint32_t trackLength[2];
 //		uint8_t pulseTiming;	// WOZ disk "optimal" pulse timing (in 0.25µs)
 		uint8_t window;
 

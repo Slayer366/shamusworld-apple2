@@ -16,6 +16,7 @@
 #include "floppydrive.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "apple2.h"
 #include "crc32.h"
@@ -257,34 +258,35 @@ bool FloppyDrive::LoadImage(const char * filename, uint8_t driveNum/*= 0*/)
 {
 	WriteLog("FLOPPY: Attempting to load image '%s' in drive #%u.\n", filename, driveNum);
 
-	if (driveNum > 1)
+	if (driveNum > 1 || filename == NULL)
 	{
 		WriteLog("FLOPPY: Attempted to load image to drive #%u!\n", driveNum);
 		return false;
 	}
 
 	// Zero out filename, in case it doesn't load
-	imageName[driveNum][0] = 0;
+//	imageName[driveNum][0] = 0;
 //probably should load EjectImage() first, so we don't have to dick around with crap
-	uint8_t * buffer = ReadFile(filename, &diskSize[driveNum]);
+//	uint8_t * buffer = ReadFile(filename, &diskSize[driveNum]);
+	uint32_t newDiskSize = 0;
+	uint8_t * buffer = ReadFile(filename, &newDiskSize);
 
 	if (buffer == NULL)
 	{
-		WriteLog("FLOPPY: Failed to open image file '%s' for reading...\n", filename);
+		WriteLog("FLOPPY: Failed to open image file '%s'\n", filename);
 		return false;
 	}
 
-	// 2MG is a container, not a disk encoding.  Sector payloads use the
-	// existing sector-image path; nibble payloads use the raw-track path below.
 	bool is2MG = false;
 	bool forceDOS33 = false;
 	bool imageLocked = false;
 	uint8_t imageVolume = 0xFE;
 	char detectName[MAX_PATH];
 	const char * detectFilename = filename;
-	if (diskSize[driveNum] >= 4 && memcmp(buffer, "2IMG", 4) == 0)
+
+	if (newDiskSize >= 4 && memcmp(buffer, "2IMG", 4) == 0)
 	{
-		if (diskSize[driveNum] < 64)
+		if (newDiskSize < 64)
 		{
 			free(buffer);
 			WriteLog("FLOPPY: 2MG header is truncated.\n");
@@ -304,34 +306,30 @@ bool FloppyDrive::LoadImage(const char * filename, uint8_t driveNum/*= 0*/)
 		uint32_t dataLength = (uint32_t)buffer[28] | ((uint32_t)buffer[29] << 8) |
 			((uint32_t)buffer[30] << 16) | ((uint32_t)buffer[31] << 24);
 
-		if (headerSize != 64 || version != 1 || dataOffset < headerSize || dataOffset > diskSize[driveNum])
+		if (headerSize != 64 || version != 1 || dataOffset < headerSize || dataOffset > newDiskSize)
 		{
 			free(buffer);
 			WriteLog("FLOPPY: Invalid or unsupported 2MG header.\n");
 			return false;
 		}
 
-		if (dataLength == 0 && imageFormat == 1 && numBlocks <= 0xFFFFFFFFu / 512u) {
+		if (dataLength == 0 && imageFormat == 1 && numBlocks <= UINT32_MAX / 512u) {
 			dataLength = numBlocks * 512u;
 		}
 
 		const bool sectorImage = (imageFormat <= 1 && dataLength == 143360);
 		const bool nibbleImage = (imageFormat == 2 && (dataLength == 232960 || dataLength == 223440));
-		if ((!sectorImage && !nibbleImage) || dataLength > diskSize[driveNum] - dataOffset)
+		if ((!sectorImage && !nibbleImage) || dataLength > newDiskSize - dataOffset)
 		{
 			free(buffer);
 			WriteLog("FLOPPY: Unsupported or invalid 2MG payload (format %u, length %u).\n", imageFormat, dataLength);
 			return false;
 		}
 
-		// Move the payload to the start of the allocation. Sector images retain
-		// the established conversion path; format 2 is raw 6656-byte tracks.
 		memmove(buffer, buffer + dataOffset, dataLength);
-		diskSize[driveNum] = dataLength;
+		newDiskSize = dataLength;
 		imageLocked = (flags & 0x80000000u) != 0;
 
-		// In 2MG, flag bit 8 says the low byte contains the DOS volume number.
-		// Otherwise retain the conventional Disk II default (254).
 		if (imageFormat == 0 && (flags & 0x00000100u)) {
 			imageVolume = (uint8_t)(flags & 0xFFu);
 		}
@@ -346,19 +344,75 @@ bool FloppyDrive::LoadImage(const char * filename, uint8_t driveNum/*= 0*/)
 		is2MG = true;
 	}
 
-	if (disk[driveNum]) {
-		free(disk[driveNum]);
-	}
+	// Apple II sector images in this range are known variants of the standard
+	// 35-track, 16-sector layout. Normalize to exactly 140K: short images are
+	// zero-filled and excess trailing bytes are ignored. This also prevents the
+	// sector-to-WOZ converter from reading beyond a short source image.
+	const char * sectorExt = strrchr(detectFilename, '.');
+	const bool sectorExtension = sectorExt != NULL &&
+		(strcasecmp(sectorExt, ".dsk") == 0 || strcasecmp(sectorExt, ".do") == 0 ||
+		 strcasecmp(sectorExt, ".po") == 0);
+	if (sectorExtension && CheckWOZType(buffer, newDiskSize) == 0 &&
+		newDiskSize >= 143105 && newDiskSize <= 143364)
+	{
+		if (newDiskSize != 143360)
+		{
+			uint8_t * normalized = (uint8_t *)calloc(143360, 1);
+			if (normalized == NULL)
+			{
+				free(buffer);
+				WriteLog("FLOPPY: Not enough memory to normalize sector image.\n");
+				return false;
+			}
+			memcpy(normalized, buffer, newDiskSize < 143360 ? newDiskSize : 143360);
+			WriteLog("FLOPPY: Normalized %u-byte sector image to 143360 bytes.\n", newDiskSize);
+			free(buffer);
+			buffer = normalized;
+			newDiskSize = 143360;
+		}
+ 	}
 
-	disk[driveNum] = buffer;
+	// Validate/convert the candidate before discarding the image currently in
+	// the drive. A failed insertion must not leave a half-loaded disk behind.
+	uint8_t * oldDisk = disk[driveNum];
+	uint32_t oldDiskSize = diskSize[driveNum];
+	uint8_t oldDiskType = diskType[driveNum];
+	uint32_t oldTrackLength = trackLength[driveNum];
+	uint32_t oldCurrentPos = currentPos[driveNum];
+	bool oldReady = diskImageReady;
 
 	diskImageReady = false;
-//	DetectImageType(filename, driveNum);
-	DetectImageType(detectFilename, driveNum, forceDOS33, imageVolume);
-	if (is2MG && diskType[driveNum] != DFT_UNKNOWN) {
+	disk[driveNum] = buffer;
+	diskSize[driveNum] = newDiskSize;
+	diskType[driveNum] = DFT_UNKNOWN;
+
+	if (!DetectImageType(detectFilename, driveNum, forceDOS33, imageVolume))
+	{
+		free(disk[driveNum]);
+		disk[driveNum] = oldDisk;
+		diskSize[driveNum] = oldDiskSize;
+		diskType[driveNum] = oldDiskType;
+		trackLength[driveNum] = oldTrackLength;
+		currentPos[driveNum] = oldCurrentPos;
+		diskImageReady = oldReady;
+		WriteLog("FLOPPY: Rejected unsupported or invalid image '%s'.\n", filename);
+		return false;
+	}
+
+
+	if (is2MG) {
 		((WOZ2 *)disk[driveNum])->writeProtected = imageLocked ? 1 : 0;
 	}
-	strcpy(imageName[driveNum], filename);
+ 
+	if (oldDisk != NULL) {
+		free(oldDisk);
+	}
+	imageDirty[driveNum] = false;
+	nibPrevValid = false;
+	nibLatchPending = false;
+	nibLatchAge = 0;
+	strncpy(imageName[driveNum], filename, MAX_PATH);
+	imageName[driveNum][MAX_PATH - 1] = 0;
 	diskImageReady = true;
 
 	WriteLog("FLOPPY: Loaded image '%s' for drive #%u.\n", filename, driveNum);
@@ -375,9 +429,9 @@ bool FloppyDrive::SaveImage(uint8_t driveNum/*= 0*/)
 		return false;
 	}
 
-	if (diskType[driveNum] == DT_EMPTY)
+	if (diskType[driveNum] == DT_EMPTY || diskType[driveNum] == DFT_UNKNOWN || disk[driveNum] == NULL || diskSize[driveNum] < 1536)
 	{
-		WriteLog("FLOPPY: No image in drive #%u to save\n", driveNum);
+		WriteLog("FLOPPY: No valid image in drive #%u to save\n", driveNum);
 		return false;
 	}
 
@@ -387,16 +441,26 @@ bool FloppyDrive::SaveImage(uint8_t driveNum/*= 0*/)
 		return false;
 	}
 
-	char * ext = strrchr(imageName[driveNum], '.');
-
-	if ((ext != NULL) && (diskType[driveNum] != DT_WOZ))
-		memcpy(ext, ".woz", 4);
-
-	return SaveWOZ(imageName[driveNum], (WOZ2 *)disk[driveNum], diskSize[driveNum]);
+	char saveName[MAX_PATH];
+	strncpy(saveName, imageName[driveNum], sizeof(saveName));
+	saveName[sizeof(saveName) - 1] = 0;
+	char * ext = strrchr(saveName, '.');
+	if (ext != NULL && diskType[driveNum] != DT_WOZ)
+	{
+		if ((size_t)(ext - saveName) + 5 > sizeof(saveName)) {
+			return false;
+		}
+		strcpy(ext, ".woz");
+	}
+	return SaveWOZ(saveName, (WOZ2 *)disk[driveNum], diskSize[driveNum]);
 }
 
 bool FloppyDrive::SaveImageAs(const char * filename, uint8_t driveNum/*= 0*/)
 {
+	if (driveNum > 1 || filename == NULL) {
+		return false;
+	}
+
 	strncpy(imageName[driveNum], filename, MAX_PATH);
 	// Ensure a NULL terminated string here, as strncpy() won't terminate the
 	// string if the source length is >= MAX_PATH
@@ -406,12 +470,27 @@ bool FloppyDrive::SaveImageAs(const char * filename, uint8_t driveNum/*= 0*/)
 
 void FloppyDrive::CreateBlankImage(uint8_t driveNum/*= 0*/)
 {
-	if (disk[driveNum] != NULL)
-		free(disk[driveNum]);
+	if (driveNum > 1) {
+		return;
+	}
+	uint32_t blankSize;
+	uint8_t * blank = InitWOZ(&blankSize);
+	if (blank == NULL) {
+		return;
+	}
 
-	disk[driveNum] = InitWOZ(&diskSize[driveNum]);
+	if (disk[driveNum] != NULL) {
+		free(disk[driveNum]);
+	}
+
+	disk[driveNum] = blank;
+	diskSize[driveNum] = blankSize;
 	diskType[driveNum] = DT_WOZ;
+	imageDirty[driveNum] = false;
+	trackLength[driveNum] = 51200;
+	currentPos[driveNum] = 0;
 	strcpy(imageName[driveNum], "newblank.woz");
+	diskImageReady = true;
 	SpawnMessage("New blank image inserted in drive %u...", driveNum);
 }
 
@@ -439,7 +518,7 @@ void FloppyDrive::SwapImages(void)
 /*
 Need to add some type of error checking here, so we can report back on bad images, etc. (basically, it does by returning DFT_UNKNOWN, but we could do better)
 */
-void FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum, bool forceDOS33, uint8_t volume)
+bool FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum, bool forceDOS33, uint8_t volume)
 {
 	diskType[driveNum] = DFT_UNKNOWN;
 
@@ -448,13 +527,19 @@ void FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum, bool 
 	if (wozType > 0)
 	{
 		// Check WOZ integrity...
-		CheckWOZIntegrity(disk[driveNum], diskSize[driveNum]);
+		// Reject malformed WOZ images before any structure is dereferenced.
+		if (!CheckWOZIntegrity(disk[driveNum], diskSize[driveNum])) {
+			return false;
+		}
 
 		// If it's a WOZ type 1 file, upconvert it to type 2
 		if (wozType == 1)
 		{
 			uint32_t size;
 			uint8_t * buffer = UpconvertWOZ1ToWOZ2(disk[driveNum], diskSize[driveNum], &size);
+			if (buffer == NULL) {
+				return false;
+			}
 
 			free(disk[driveNum]);
 			disk[driveNum] = buffer;
@@ -464,6 +549,8 @@ void FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum, bool 
 
 		WriteLog("FLOPPY: OBT is %d\n", ((WOZ2 *)disk[driveNum])->optimalBitTmg);
 		diskType[driveNum] = DT_WOZ;
+		trackLength[driveNum] = 51200;
+		currentPos[driveNum] = 0;
 	}
 	else if (diskSize[driveNum] == 232960 || diskSize[driveNum] == 223440)
 	{
@@ -475,7 +562,7 @@ void FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum, bool 
 		uint32_t wozSize;
 		uint8_t * wozData = InitWOZ(&wozSize);
 		if (wozData == NULL) {
-			return;
+			return false;
 		}
 
 		WOZ2 & woz = *((WOZ2 *)wozData);
@@ -483,7 +570,7 @@ void FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum, bool 
 		// Force every virtual track element to preserve the full raw nibble block capacity size
 		for (uint32_t i = 0; i < 40; ++i)
 		{
-			woz.track[i].bitCount = bytesPerTrack * 8;
+			woz.track[i].bitCount = Uint32LE(bytesPerTrack * 8);
 		}
 
 		for (uint32_t track = 0; track < 35; ++track)
@@ -497,7 +584,7 @@ void FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum, bool 
 		disk[driveNum] = wozData;
 		diskSize[driveNum] = wozSize;
 		diskType[driveNum] = DT_NYBBLE;
-		trackLength[driveNum] = (uint16_t)(bytesPerTrack * 8);
+		trackLength[driveNum] = bytesPerTrack * 8;
 		currentPos[driveNum] = 0;
 		WriteLog("FLOPPY: Converted %s image to WOZ2 tracks.\n", bytesPerTrack == 6656 ? "NIB" : "NB2");
 	}
@@ -505,8 +592,9 @@ void FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum, bool 
 	{
 		const char * ext = strrchr(filename, '.');
 
-		if (ext == NULL)
-			return;
+		if (ext == NULL) {
+			return false;
+		}
 
 		WriteLog("FLOPPY: Found extension [%s]...\n", ext);
 
@@ -541,18 +629,27 @@ void FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum, bool 
 				}
 			}
 
-			if (foundProdos)
+			if (foundProdos) {
 				diskType[driveNum] = DT_PRODOS;
+			}
+		}
+
+		if (diskType[driveNum] == DFT_UNKNOWN) {
+			return false;
 		}
 
 // Actually, it just might matter WRT to nybblyzing/denybblyzing
 // (and, it does... :-P)
-		WOZifyImage(driveNum, volume);
+		if (!WOZifyImage(driveNum, volume)) {
+			return false;
+		}
 	}
 	else if (diskSize[driveNum] == 143488)
 	{
 		diskType[driveNum] = DT_DOS33_HDR;
-		WOZifyImage(driveNum, volume);
+		if (!WOZifyImage(driveNum, volume)) {
+			return false;
+		}
 	}
 
 // #warning "Should we attempt to nybblize unknown images here? Definitely SHOULD issue a warning!"
@@ -561,6 +658,7 @@ void FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum, bool 
 	WriteLog("FLOPPY: Detected image type %s...\n", (diskType[driveNum] == DT_DOS33 ?
 		"DOS 3.3" : (diskType[driveNum] == DT_DOS33_HDR ?
 		"DOS 3.3 (headered)" : (diskType[driveNum] == DT_PRODOS ? "ProDOS" : (diskType[driveNum] == DT_NYBBLE ? "NIB/NB2" : (diskType[driveNum] == DT_WOZ ? "WOZ" : "unknown"))))));
+	return diskType[driveNum] != DFT_UNKNOWN && diskType[driveNum] != DT_EMPTY;
 }
 
 //
@@ -586,7 +684,7 @@ void FloppyDrive::WriteBits(uint8_t * dest, const uint8_t * src, uint16_t bits, 
 	}
 }
 
-void FloppyDrive::WOZifyImage(uint8_t driveNum, uint8_t volume)
+bool FloppyDrive::WOZifyImage(uint8_t driveNum, uint8_t volume)
 {
 	// hdr (21) + nybbles (343) + footer (48) = 412 bytes per sector
 	// (not incl. 64 byte track marker)
@@ -615,12 +713,17 @@ void FloppyDrive::WOZifyImage(uint8_t driveNum, uint8_t volume)
 		0x0, 0x8, 0x1, 0x9, 0x2, 0xA, 0x3, 0xB, 0x4, 0xC, 0x5, 0xD, 0x6, 0xE, 0x7, 0xF };
 
 	uint8_t tmpNib[343];
-	// Save current image until we're done converting
+	// Keep the source image intact until the converted image is complete.
 	uint8_t * tmpDisk = disk[driveNum];
 
 	// Set up track index...
-	disk[driveNum] = InitWOZ(&diskSize[driveNum]);
-	WOZ2 & woz = *((WOZ2 *)disk[driveNum]);
+	uint32_t wozSize;
+	uint8_t * wozData = InitWOZ(&wozSize);
+	if (wozData == NULL) {
+		return false;
+	}
+	disk[driveNum] = wozData;
+	WOZ2 & woz = *((WOZ2 *)wozData);
 
 	// Upconvert data from DSK & friends format to WOZ tracks  :-)
 	for(uint8_t trk=0; trk<35; trk++)
@@ -707,11 +810,14 @@ void FloppyDrive::WOZifyImage(uint8_t driveNum, uint8_t volume)
 		}
 
 		// Set the proper bit/byte lengths in the WOZ for this track
-		woz.track[trk].bitCount = Uint16LE(dstBitPtr);
+		woz.track[trk].bitCount = Uint32LE(dstBitPtr);
 	}
 
-	// Finally, free the non-WOZ image now that we're done converting
+	diskSize[driveNum] = wozSize;
+	trackLength[driveNum] = 51200;
+	currentPos[driveNum] = 0;
 	free(tmpDisk);
+	return true;
 }
 
 const char * FloppyDrive::ImageName(uint8_t driveNum/*= 0*/)
@@ -753,15 +859,18 @@ const char * FloppyDrive::ImageName(uint8_t driveNum/*= 0*/)
 void FloppyDrive::EjectImage(uint8_t driveNum/*= 0*/)
 {
 	// Sanity check
-	if (diskType[driveNum] == DT_EMPTY)
+	if (driveNum > 1 || diskType[driveNum] == DT_EMPTY) {
 		return;
+	}
 
 	// Probably want to save a dirty image... ;-)
-	if (SaveImage(driveNum))
+	if (SaveImage(driveNum)) {
 		WriteLog("FLOPPY: Ejected image file '%s' from drive %u...\n", imageName[driveNum], driveNum);
+	}
 
-	if (disk[driveNum])
+	if (disk[driveNum]) {
 		free(disk[driveNum]);
+	}
 
 	disk[driveNum] = NULL;
 	diskSize[driveNum] = 0;
@@ -778,7 +887,7 @@ bool FloppyDrive::IsEmpty(uint8_t driveNum/*= 0*/)
 		return true;
 	}
 
-	return (diskType[driveNum] == DT_EMPTY ? true : false);
+	return (diskType[driveNum] == DT_EMPTY || diskType[driveNum] == DFT_UNKNOWN);
 }
 
 bool FloppyDrive::IsWriteProtected(uint8_t driveNum/*= 0*/)
@@ -786,6 +895,12 @@ bool FloppyDrive::IsWriteProtected(uint8_t driveNum/*= 0*/)
 	if (driveNum > 1)
 	{
 		WriteLog("FLOPPY: Attempted DiskIsWriteProtected() for drive #%u!\n", driveNum);
+		return true;
+	}
+
+	if (disk[driveNum] == NULL || diskSize[driveNum] < 1536 ||
+		diskType[driveNum] == DT_EMPTY || diskType[driveNum] == DFT_UNKNOWN)
+	{
 		return true;
 	}
 
@@ -798,6 +913,12 @@ void FloppyDrive::SetWriteProtect(bool state, uint8_t driveNum/*= 0*/)
 	if (driveNum > 1)
 	{
 		WriteLog("FLOPPY: Attempted set write protect for drive #%u!\n", driveNum);
+		return;
+	}
+
+	if (disk[driveNum] == NULL || diskSize[driveNum] < 1536 ||
+		diskType[driveNum] == DT_EMPTY || diskType[driveNum] == DFT_UNKNOWN)
+	{
 		return;
 	}
 
@@ -861,52 +982,127 @@ void FloppyDrive::SaveState(FILE * file)
 
 void FloppyDrive::LoadState(FILE * file)
 {
-	// Eject images if they're loaded
+	if (file == NULL) {
+		return;
+	}
+
+	// Eject current images first. Build the restored state in
+	// temporary buffers so a truncated/corrupt snapshot cannot leave a
+	// partially initialized drive or leak an allocation.
 	EjectImage(0);
 	EjectImage(1);
 
-	// Read internal state variables
-	motorOn = fgetc(file);
-	activeDrive = fgetc(file);
-	ioMode = fgetc(file);
-	dataRegister = fgetc(file);
-	ioHappened = (fgetc(file) == 1 ? true : false);
+	uint8_t loadedMotorOn, loadedActiveDrive, loadedIOMode, loadedDataRegister, loadedIOHappened;
+	uint8_t * loadedDisk[2] = { NULL, NULL };
+	uint32_t loadedSize[2] = { 0, 0 };
+	uint8_t loadedType[2] = { DT_EMPTY, DT_EMPTY };
+	uint8_t loadedPhase[2] = { 0, 0 };
+	uint8_t loadedHeadPos[2] = { 0, 0 };
+	uint32_t loadedCurrentPos[2] = { 0, 0 };
+	bool loadedDirty[2] = { false, false };
+	char loadedName[2][MAX_PATH] = { { 0 }, { 0 } };
 
-	diskSize[0] = ReadLong(file);
+	auto readByte = [file](uint8_t & value) -> bool {
+		int byte = fgetc(file);
+		if (byte == EOF) {
+			return false;
+		}
+		value = (uint8_t)byte;
+		return true;
+	};
 
-	if (diskSize[0])
+	auto readDisk = [this, file, &loadedDisk, &loadedSize, &loadedType, &loadedPhase,
+		&loadedHeadPos, &loadedCurrentPos, &loadedDirty, &loadedName, &readByte](uint8_t drive) -> bool {
+		uint32_t size = ReadLong(file);
+		if (size == UINT32_MAX) {
+			return false;
+		}
+		if (size == 0) {
+			return true;
+		}
+		if (size < 1536 || size > 64u * 1024u * 1024u) {
+			return false;
+		}
+
+		uint32_t type;
+		uint8_t dirty;
+		if ((type = ReadLong(file)) == UINT32_MAX || type == DT_EMPTY || type > DT_NYBBLE ||
+			!readByte(loadedPhase[drive]) || loadedPhase[drive] > 15 ||
+			!readByte(loadedHeadPos[drive]) || loadedHeadPos[drive] > 140 ||
+			(loadedCurrentPos[drive] = ReadLong(file)) == UINT32_MAX ||
+			loadedCurrentPos[drive] >= 64u * 1024u * 1024u * 8u ||
+			!readByte(dirty) || dirty > 1)
+		{
+			return false;
+		}
+
+		loadedType[drive] = (uint8_t)type;
+		loadedDirty[drive] = (dirty != 0);
+		loadedDisk[drive] = (uint8_t *)malloc(size);
+		if (loadedDisk[drive] == NULL) {
+			return false;
+		}
+		if (fread(loadedDisk[drive], 1, size, file) != size ||
+			fread(loadedName[drive], 1, MAX_PATH, file) != MAX_PATH)
+		{
+			return false;
+		}
+		loadedName[drive][MAX_PATH - 1] = 0;
+		loadedSize[drive] = size;
+		return true;
+	};
+
+	bool valid = readByte(loadedMotorOn) && readByte(loadedActiveDrive) &&
+		readByte(loadedIOMode) && readByte(loadedDataRegister) && readByte(loadedIOHappened) &&
+		loadedMotorOn <= 1 && loadedActiveDrive <= 1 && loadedIOMode <= IO_MODE_WRITE &&
+		loadedIOHappened <= 1 && readDisk(0) && readDisk(1);
+
+	if (!valid)
 	{
-		disk[0] = new uint8_t[diskSize[0]];
-		diskType[0] = (uint8_t)ReadLong(file);
-		phase[0] = fgetc(file);
-		headPos[0] = fgetc(file);
-		currentPos[0] = ReadLong(file);
-		imageDirty[0] = (fgetc(file) == 1 ? true : false);
-		if (fread(disk[0], 1, diskSize[0], file));
-		if (fread(imageName[0], 1, MAX_PATH, file));
+		free(loadedDisk[0]);
+		free(loadedDisk[1]);
+		disk[0] = disk[1] = NULL;
+		diskSize[0] = diskSize[1] = 0;
+		diskType[0] = diskType[1] = DT_EMPTY;
+		diskImageReady = false;
+		WriteLog("FLOPPY: Rejected truncated or invalid floppy state.\n");
+		return;
 	}
 
-	diskSize[1] = ReadLong(file);
-
-	if (diskSize[1])
+	motorOn = loadedMotorOn;
+	activeDrive = loadedActiveDrive;
+	ioMode = loadedIOMode;
+	dataRegister = loadedDataRegister;
+	ioHappened = (loadedIOHappened != 0);
+	for (uint8_t drive = 0; drive < 2; ++drive)
 	{
-		disk[1] = new uint8_t[diskSize[1]];
-		diskType[1] = (uint8_t)ReadLong(file);
-		phase[1] = fgetc(file);
-		headPos[1] = fgetc(file);
-		currentPos[1] = ReadLong(file);
-		imageDirty[1] = (fgetc(file) == 1 ? true : false);
-		if (fread(disk[1], 1, diskSize[1], file));
-		if (fread(imageName[1], 1, MAX_PATH, file));
+		disk[drive] = loadedDisk[drive];
+		diskSize[drive] = loadedSize[drive];
+		diskType[drive] = loadedType[drive];
+		phase[drive] = loadedPhase[drive];
+		headPos[drive] = loadedHeadPos[drive];
+		currentPos[drive] = loadedCurrentPos[drive];
+		imageDirty[drive] = loadedDirty[drive];
+		memcpy(imageName[drive], loadedName[drive], MAX_PATH);
+		trackLength[drive] = 51200;
 	}
+	diskImageReady = (disk[0] != NULL || disk[1] != NULL);
+	nibPrevValid = false;
+	nibLatchPending = false;
+	nibLatchAge = 0;
 }
 
 uint32_t FloppyDrive::ReadLong(FILE * file)
 {
 	uint32_t r = 0;
 
-	for(int i=0; i<4; i++)
-		r = (r << 8) | fgetc(file);
+	for(int i = 0; i < 4; ++i)
+	{
+		int byte = fgetc(file);
+		if (byte == EOF)
+			return UINT32_MAX;
+		r = (r << 8) | (uint8_t)byte;
+	}
 
 	return r;
 }
@@ -987,7 +1183,9 @@ If it ever *does* become a problem, doing the physical modeling of the head movi
 	};
 
 	// Sanity check
-	if (diskType[activeDrive] == DT_EMPTY) {
+	if (activeDrive > 1 || !diskImageReady || diskType[activeDrive] == DT_EMPTY ||
+		diskType[activeDrive] == DFT_UNKNOWN || disk[activeDrive] == NULL || diskSize[activeDrive] < 1536)
+	{
 		return;
 	}
 
@@ -1019,19 +1217,26 @@ If it ever *does* become a problem, doing the physical modeling of the head movi
 	{
 		WOZ2 & woz = *((WOZ2 *)disk[activeDrive]);
 		uint8_t newTIdx = woz.tmap[headPos[activeDrive]];
-		float newBitLen = (newTIdx == 0xFF
-			? 51200.0f : Uint16LE(woz.track[newTIdx].bitCount));
 
 		uint8_t oldTIdx = woz.tmap[oldHeadPos];
-		float oldBitLen = (oldTIdx == 0xFF
-			? 51200.0f : Uint16LE(woz.track[oldTIdx].bitCount));
+		float newBitLen = 51200.0f;
+		float oldBitLen = 51200.0f;
+		if (newTIdx < 160) {
+			uint32_t bits = Uint32LE(woz.track[newTIdx].bitCount);
+			if (bits > 0) newBitLen = (float)bits;
+		}
+		if (oldTIdx < 160) {
+			uint32_t bits = Uint32LE(woz.track[oldTIdx].bitCount);
+			if (bits > 0) oldBitLen = (float)bits;
+		}
+
 //WriteLog("FLOPPY: Current pos pre: %u, ", currentPos[activeDrive]);
 		currentPos[activeDrive] = (uint32_t)((float)currentPos[activeDrive] * (newBitLen / oldBitLen));
 //WriteLog("post: %u; newBitLen/old = %.1f/%.1f\n", currentPos[activeDrive], newBitLen, oldBitLen);
 
 		if (diskType[activeDrive] != DT_NYBBLE)
 		{
-			trackLength[activeDrive] = (uint16_t)newBitLen;
+			trackLength[activeDrive] = (uint32_t)newBitLen;
 		}
 //		SpawnMessage("Stepping to track %u...", headPos[activeDrive] >> 2);
 	}
@@ -1063,6 +1268,10 @@ void FloppyDrive::ControlMotor(uint8_t addr)
 void FloppyDrive::DriveEnable(uint8_t addr)
 {
 	// $C0EA - B
+	if (addr > 1) {
+		return;
+	}
+
 	activeDrive = addr;
 //WriteLog("FLOPPY: Selecting drive #%hhd\n", addr + 1);
 }
@@ -1098,7 +1307,8 @@ void FloppyDrive::SetReadWriteSwitch(uint8_t state)
 uint8_t FloppyDrive::DataRegister(void)
 {
 	// Sanity check
-	if (diskImageReady && (diskType[activeDrive] != DT_EMPTY))
+	if (activeDrive < 2 && diskImageReady && disk[activeDrive] != NULL &&
+		(diskType[activeDrive] != DT_EMPTY) && (diskType[activeDrive] != DFT_UNKNOWN))
 	{
 		lastAccessClock = mainCPU.clock;
 		accessSeen = true;
@@ -1120,7 +1330,8 @@ uint8_t FloppyDrive::DataRegister(void)
 	// CPU never got to read, hand it over once, within the grace period.
 	// A byte that is read while still valid is marked consumed, so nothing
 	// is ever delivered twice.
-	if (diskImageReady && (diskType[activeDrive] == DT_NYBBLE) && !slSwitch && !rwSwitch)
+	if (activeDrive < 2 && diskImageReady && disk[activeDrive] != NULL &&
+		(diskType[activeDrive] == DT_NYBBLE) && !slSwitch && !rwSwitch)
 	{
 		if (value & 0x80) {
 			nibLatchPending = false;
@@ -1230,19 +1441,26 @@ void FloppyDrive::RunSequencer(uint32_t cyclesToRun)
 	static uint32_t prng = 1;
 
 	// Sanity checks
-	if (!diskImageReady)
-		return;
-	else if (diskType[activeDrive] == DT_EMPTY)
-		return;
-	else if (motorOn == false)
+	if (activeDrive > 1 || !diskImageReady || disk[activeDrive] == NULL ||
+		diskType[activeDrive] == DT_EMPTY || diskType[activeDrive] == DFT_UNKNOWN ||
+		diskSize[activeDrive] < 1536)
 	{
-		if (driveOffTimeout == 0)
+		return;
+	}
+
+	if (motorOn == false)
+	{
+		if (driveOffTimeout == 0) {
 			return;
+		}
 
 		driveOffTimeout--;
 	}
 
 	WOZ2 & woz = *((WOZ2 *)disk[activeDrive]);
+	if (headPos[activeDrive] >= 160) {
+		return;
+	}
 	uint8_t tIdx = woz.tmap[headPos[activeDrive]];
 
 	// Force a safe linear track lookup index specifically for raw nibbles to prevent out-of-bounds pointer reads
@@ -1255,13 +1473,33 @@ void FloppyDrive::RunSequencer(uint32_t cyclesToRun)
 	}
 
 	uint8_t * tdata = NULL;
-	if (tIdx != 0xFF) {
-		tdata = disk[activeDrive] + (Uint16LE(woz.track[tIdx].startingBlock) * 512);
+	uint32_t trackBits = 51200;
+	uint32_t trackBytes = 0;
+	if (tIdx != 0xFF)
+	{
+		if (tIdx >= 160)
+			return;
+		WOZTrack2 & track = woz.track[tIdx];
+		uint32_t start = (uint32_t)Uint16LE(track.startingBlock) * 512;
+		uint32_t capacity = (uint32_t)Uint16LE(track.blockCount) * 512;
+		trackBits = Uint32LE(track.bitCount);
+		trackBytes = (trackBits / 8) + ((trackBits & 7) ? 1 : 0);
+		if (start < 1536 || capacity == 0 || start > diskSize[activeDrive] ||
+			capacity > diskSize[activeDrive] - start || trackBits == 0 ||
+			trackBytes > capacity)
+			return;
+		tdata = disk[activeDrive] + start;
 	}
 
-	// We have to divide the optimal bit timing by 4 because we only have a 0.5µs granularity here (with the doubling of the "cyclesToRun").  The OBT has a granularity of 0.125µs.  Not sure how to fix that--have to separate the pulse handling from the sequencer?
-	// N.B.: Border Zone has an OBT of 28, when divides evenly by 4, but it still fails...
+	trackLength[activeDrive] = trackBits;
+	if (currentPos[activeDrive] >= trackLength[activeDrive]) {
+		currentPos[activeDrive] = 0;
+	}
+
 	uint8_t pulseTiming = woz.optimalBitTmg / 4;
+	if (pulseTiming == 0) {
+		pulseTiming = 1;
+	}
 
 	// It's x2 because the sequencer clock runs twice as fast as the CPU clock.
 	cyclesToRun *= 2;
@@ -1281,11 +1519,11 @@ if (logSeq)
 
 		if (pulseClock == 0)
 		{
-			uint16_t bytePos = currentPos[activeDrive] / 8;
+			uint32_t bytePos = currentPos[activeDrive] / 8;
 			uint8_t bitPos = currentPos[activeDrive] % 8;
 			window <<= 1;
 
-			if (tIdx != 0xFF)
+			if (tIdx != 0xFF && tdata != NULL && bytePos < trackBytes)
 			{
 				if (tdata[bytePos] & bitMask[bitPos])
 				{
@@ -1380,11 +1618,11 @@ sprintf(&sequence[seqLen], "(%02X)%02X ", nextState, sequencerState);
 			dataRegister <<= 1;
 //if (!stopWriting)
 {
-			if (rwSwitch && (tIdx != 0xFF)
-				&& !woz.writeProtected)
+			if (rwSwitch && (tIdx != 0xFF) && tdata != NULL
+				&& (currentPos[activeDrive] / 8) < trackBytes && !woz.writeProtected)
 			{
 				imageDirty[activeDrive] = true;
-				uint16_t bytePos = currentPos[activeDrive] / 8;
+				uint32_t bytePos = currentPos[activeDrive] / 8;
 				uint8_t bitPos = currentPos[activeDrive] % 8;
 
 				if (dataRegister & 0x80)
@@ -1408,10 +1646,11 @@ sprintf(&sequence[seqLen], "(%02X)%02X ", nextState, sequencerState);
 			dataRegister = cpuDataBus;
 //if (!stopWriting)
 {
-			if (rwSwitch && (tIdx != 0xFF) && !woz.writeProtected)
+			if (rwSwitch && (tIdx != 0xFF) && tdata != NULL
+				&& (currentPos[activeDrive] / 8) < trackBytes && !woz.writeProtected)
 			{
 				imageDirty[activeDrive] = true;
-				uint16_t bytePos = currentPos[activeDrive] / 8;
+				uint32_t bytePos = currentPos[activeDrive] / 8;
 				uint8_t bitPos = currentPos[activeDrive] % 8;
 				tdata[bytePos] |= bitMask[bitPos];
 			}

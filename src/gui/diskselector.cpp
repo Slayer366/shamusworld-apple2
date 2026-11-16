@@ -653,7 +653,10 @@ void DiskSelector::MouseDown(int32_t x, int32_t y, uint32_t buttons)
 				return;
 			}
 		} else {
-			floppyDrive[0].LoadImage(selected.fullPath.c_str(), driveNumber);
+			if (!floppyDrive[0].LoadImage(selected.fullPath.c_str(), driveNumber)) {
+				SpawnMessage("*** DISK LOAD FAILED ***");
+				return;
+			}
 			SpawnMessage("*** DISK: %s ***", selected.image.c_str());
 		}
 	}

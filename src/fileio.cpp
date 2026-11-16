@@ -36,26 +36,45 @@ uint8_t standardTMAP[160] = {
 uint8_t * ReadFile(const char * filename, uint32_t * sizePtr/*= NULL*/, uint32_t skip/*= 0*/)
 {
 	FILE * fp = fopen(filename, "rb");
-
-	if (!fp)
+	if (!fp) {
 		return NULL;
-
-	fseek(fp, 0, SEEK_END);
-	uint32_t size = ftell(fp);
-	fseek(fp, 0, SEEK_SET);
-
-	if (skip > 0)
-	{
-		fseek(fp, skip, SEEK_CUR);
-		size -= skip;
 	}
 
+	if (fseek(fp, 0, SEEK_END) != 0)
+	{
+		fclose(fp);
+		return NULL;
+	}
+
+	long fileSize = ftell(fp);
+	if (fileSize <= 0 || (unsigned long)fileSize > UINT32_MAX || skip >= (uint32_t)fileSize ||
+		fseek(fp, (long)skip, SEEK_SET) != 0)
+	{
+		fclose(fp);
+		return NULL;
+	}
+
+	uint32_t size = (uint32_t)fileSize - skip;
 	uint8_t * buffer = (uint8_t *)malloc(size);
-	if (fread(buffer, 1, size, fp));
+
+	if (buffer == NULL)
+	{
+		fclose(fp);
+		return NULL;
+	}
+ 
+	if (fread(buffer, 1, size, fp) != size)
+	{
+		free(buffer);
+		fclose(fp);
+		return NULL;
+	}
+
 	fclose(fp);
 
-	if (sizePtr != NULL)
+	if (sizePtr != NULL) {
 		*sizePtr = size;
+	}
 
 	return buffer;
 }
@@ -101,6 +120,9 @@ uint8_t * InitWOZ(uint32_t * pSize/*= NULL*/)
 {
 	uint32_t size = 1536 + (35 * (13 * 512));
 	uint8_t * data = (uint8_t *)malloc(size);
+	if (data == NULL) {
+		return NULL;
+	}
 	WOZ2 & woz = *((WOZ2 *)data);
 
 	// Zero out WOZ image in memory
@@ -129,16 +151,26 @@ uint8_t * InitWOZ(uint32_t * pSize/*= NULL*/)
 
 uint8_t * UpconvertWOZ1ToWOZ2(uint8_t * woz1Data, uint32_t woz1Size, uint32_t * newSize)
 {
+	if (woz1Data == NULL || newSize == NULL || woz1Size < 256) {
+		return NULL;
+	}
 	WOZ1 & woz1 = *((WOZ1 *)woz1Data);
 
 	// First, figure out how large the new structure will be in comparison to
 	// the old one...
-	uint32_t numTracks = woz1.trksSize / sizeof(WOZ1Track);
+	uint32_t numTracks = Uint32LE(woz1.trksSize) / sizeof(WOZ1Track);
 	uint32_t metadataSize = woz1Size - (Uint32LE(woz1.trksSize) + 256);
+	uint32_t trackStorageSize = numTracks * (13 * 512);
+	if (metadataSize > UINT32_MAX - 0x600 - trackStorageSize) {
+		return NULL;
+	}
 
 	// N.B.: # of blocks for each track will *always* be <= 13 for WOZ1
-	*newSize = 0x600 + (numTracks * (13 * 512)) + metadataSize;
+	*newSize = 0x600 + trackStorageSize + metadataSize;
 	uint8_t * woz2Data = (uint8_t *)malloc(*newSize);
+	if (woz2Data == NULL) {
+		return NULL;
+	}
 	memset(woz2Data, 0, *newSize);
 
 	WOZ2 & woz2 = *((WOZ2 *)woz2Data);
@@ -193,71 +225,108 @@ uint8_t CheckWOZType(const uint8_t * wozData, uint32_t wozSize)
 //
 bool CheckWOZIntegrity(const uint8_t * wozData, uint32_t wozSize)
 {
-	WOZ2 & woz = *((WOZ2 *)wozData);
-	uint32_t crc = CRC32(&wozData[12], wozSize - 12);
-	uint32_t wozCRC = Uint32LE(woz.crc32);
-
-	if ((wozCRC != 0) && (wozCRC != crc))
-	{
-		WriteLog("FILEIO: Corrupted data found in WOZ. CRC32: %08X, computed: %08X\n", wozCRC, crc);
+	// The common WOZ header and the fixed INFO/TMAP/TRKS headers occupy
+	// 256 bytes.  Do not cast to either WOZ structure until the relevant
+	// portion of the file has been shown to exist.
+	if (wozData == NULL || wozSize < 256) {
 		return false;
 	}
-	else if (wozCRC == 0)
+
+//	if ((wozCRC != 0) && (wozCRC != crc))
+	uint32_t storedCRC;
+	memcpy(&storedCRC, wozData + 8, sizeof(storedCRC));
+	storedCRC = Uint32LE(storedCRC);
+	if (storedCRC != 0 && storedCRC != CRC32(wozData + 12, wozSize - 12))
+	{
+		WriteLog("FILEIO: Corrupted data found in WOZ. CRC32: %08X\n", storedCRC);
+		return false;
+	}
+	if (storedCRC == 0) {
 		WriteLog("FILEIO: Warning--WOZ file has no CRC...\n");
+	}
 
-#if 0 // Need to fix this so it works with both 1 & 2 (works with only 1 ATM)
-	WriteLog("Track map:\n");
-	WriteLog("                                        1   1   1   1   1   1   1   1\n");
-	WriteLog("0.,.1.,.2.,.3.,.4.,.5.,.6.,.7.,.8.,.9.,.0.,.1.,.2.,.3.,.4.,.5.,.6.,.7.,.\n");
-	WriteLog("------------------------------------------------------------------------\n");
-
-	for(uint8_t j=0; j<2; j++)
+	if (memcmp(wozData + 12, "INFO", 4) != 0 ||
+		memcmp(wozData + 80, "TMAP", 4) != 0 ||
+		memcmp(wozData + 248, "TRKS", 4) != 0)
 	{
-		for(uint8_t i=0; i<72; i++)
+		return false;
+	}
+
+	uint32_t infoSize, tmapSize, trksSize;
+	memcpy(&infoSize, wozData + 16, 4);
+	memcpy(&tmapSize, wozData + 84, 4);
+	memcpy(&trksSize, wozData + 252, 4);
+	infoSize = Uint32LE(infoSize);
+	tmapSize = Uint32LE(tmapSize);
+	trksSize = Uint32LE(trksSize);
+	if (infoSize != 60 || tmapSize != 160 || trksSize > wozSize - 256) {
+		return false;
+	}
+
+	const uint8_t * tmap = wozData + 88;
+	if (memcmp(wozData, woz1Header, 8) == 0)
+	{
+		uint32_t trackBytes = trksSize;
+		if ((trackBytes % sizeof(WOZ1Track)) != 0 || trackBytes > wozSize - 256)
+			return false;
+		uint32_t trackCount = trackBytes / sizeof(WOZ1Track);
+		if (trackCount > 160)
+			return false;
+
+		for (uint32_t i = 0; i < 160; ++i)
 		{
-			char buf[64] = "..";
-			buf[0] = buf[1] = '.';
-
-			if (woz.tmap[i] != 0xFF)
-				sprintf(buf, "%02d", woz.tmap[i]);
-
-			WriteLog("%c", buf[j]);
+			if (tmap[i] == 0xFF)
+				continue;
+			if (tmap[i] >= trackCount)
+				return false;
+			const uint8_t * track = wozData + 256 + ((uint32_t)tmap[i] * sizeof(WOZ1Track));
+			uint16_t byteCount, bitCount;
+			memcpy(&byteCount, track + 6646, 2);
+			memcpy(&bitCount, track + 6648, 2);
+			byteCount = Uint16LE(byteCount);
+			bitCount = Uint16LE(bitCount);
+			if (byteCount == 0 || byteCount > 6646 || bitCount == 0 || bitCount > (uint32_t)byteCount * 8)
+				return false;
+		}
+	}
+	else if (memcmp(wozData, woz2Header, 8) == 0)
+	{
+		// WOZ2 has 160 fixed-size track descriptors before track data.
+		if (wozSize < 1536) {
+			return false;
 		}
 
-		WriteLog("\n");
-	}
-
-	WriteLog("\n1   1   2   2   2   2   2   2   2   2   2   2   3   3   3   3   3   3\n");
-	WriteLog("8.,.9.,.0.,.1.,.2.,.3.,.4.,.5.,.6.,.7.,.8.,.9.,.0.,.1.,.2.,.3.,.4.,.5\n");
-	WriteLog("---------------------------------------------------------------------\n");
-
-	for(uint8_t j=0; j<2; j++)
-	{
-		for(uint8_t i=72; i<141; i++)
+		for (uint32_t i = 0; i < 160; ++i)
 		{
-			char buf[64] = "..";
+			if (tmap[i] == 0xFF) {
+				continue;
+			}
 
-			if (woz.tmap[i] != 0xFF)
-				sprintf(buf, "%02d", woz.tmap[i]);
-
-			WriteLog("%c", buf[j]);
+			if (tmap[i] >= 160) {
+				return false;
+			}
+			const uint8_t * desc = wozData + 256 + ((uint32_t)tmap[i] * 8);
+			uint16_t startBlock, blockCount;
+			uint32_t bitCount;
+			memcpy(&startBlock, desc, 2);
+			memcpy(&blockCount, desc + 2, 2);
+			memcpy(&bitCount, desc + 4, 4);
+			startBlock = Uint16LE(startBlock);
+			blockCount = Uint16LE(blockCount);
+			bitCount = Uint32LE(bitCount);
+			uint32_t dataStart = (uint32_t)startBlock * 512;
+			uint32_t dataSize = (uint32_t)blockCount * 512;
+			if (startBlock < 3 || blockCount == 0 || bitCount == 0 ||
+				bitCount > dataSize * 8 || dataStart > wozSize || dataSize > wozSize - dataStart)
+			{
+				return false;
+			}
 		}
-
-		WriteLog("\n");
 	}
-
-	WriteLog("\n");
-
-#if 0
-	uint8_t numTracks = woz.trksSize / sizeof(WOZ1Track);
-
-	// N.B.: Need to check the track in tmap[] to have this tell the correct track...  Right now, it doesn't
-	for(uint8_t i=0; i<numTracks; i++)
+	else
 	{
-		WriteLog("WOZ: Stream %u: %d bits (packed into %d bytes)\n", i, woz.track[i].bitCount, (woz.track[i].bitCount + 7) / 8);
+		return false;
 	}
-#endif
-#endif
 
 	WriteLog("FILEIO: Well formed WOZ file found\n");
 	return true;
@@ -266,6 +335,10 @@ bool CheckWOZIntegrity(const uint8_t * wozData, uint32_t wozSize)
 
 bool SaveWOZ(const char * filename, WOZ2 * woz, uint32_t size)
 {
+	if (filename == NULL || woz == NULL || size < 256) {
+		return false;
+	}
+
 	// Set up CRC32 before writing
 	woz->crc32 = Uint32LE(CRC32(woz->infoTag, size - 12));
 
@@ -280,11 +353,17 @@ bool SaveWOZ(const char * filename, WOZ2 * woz, uint32_t size)
 		return false;
 	}
 
-	fwrite((uint8_t *)woz, 1, size, file);
-	fclose(file);
+	bool success = (fwrite((uint8_t *)woz, 1, size, file) == size);
+	if (fclose(file) != 0) {
+		success = false;
+	}
+	if (!success)
+	{
+		WriteLog("FILEIO: Failed while writing image file '%s'.\n", filename);
+		return false;
+	}
 
 	WriteLog("FILEIO: Successfully wrote image file '%s'...\n", filename);
 
 	return true;
 }
-
