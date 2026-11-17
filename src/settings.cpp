@@ -57,6 +57,7 @@ void LoadSettings(void)
 	ParseConfigFile();
 
 	settings.useJoystick = GetValue("useJoystick", false);
+	settings.twoJoysticks = GetValue("2Joysticks", false);
 	settings.joyport = GetValue("joyport", 0);
 	settings.hardwareTypeNTSC = GetValue("hardwareTypeNTSC", true);
 	settings.fullscreen = GetValue("fullscreen", false);
@@ -100,6 +101,7 @@ void SaveSettings(void)
 	SetValue("autoSaveState", settings.autoStateSaving);
 	SetValue("autoStateFilename", settings.autoStatePath);
 	SetValue("useJoystick", settings.useJoystick);
+	SetValue("2Joysticks", settings.twoJoysticks);
 	SetValue("joyport", settings.joyport);
 	SetValue("hardwareTypeNTSC", settings.hardwareTypeNTSC);
 	SetValue("fullscreen", settings.fullscreen);

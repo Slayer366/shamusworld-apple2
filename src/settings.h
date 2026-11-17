@@ -23,6 +23,7 @@
 struct Settings
 {
 	bool useJoystick;
+	bool twoJoysticks;
 	int32_t joyport;			// Joystick port
 	bool hardwareTypeNTSC;		// Set to false for PAL
 	bool fullscreen;
