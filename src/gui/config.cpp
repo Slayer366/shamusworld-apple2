@@ -22,18 +22,18 @@
 //#define C_WIDTH	402
 //#define C_HEIGHT	322
 #define C_WIDTH		400
-#define C_HEIGHT	300
+#define C_HEIGHT	320
 #define C_XPOS		((VIRTUAL_SCREEN_WIDTH - C_WIDTH) / 2)
 #define C_YPOS		((VIRTUAL_SCREEN_HEIGHT - C_HEIGHT) / 2)
 
 #define HD_ICON_X		174
-#define HD_ICON_Y		210
+#define HD_ICON_Y		222
 #define HD_ICON_W		52
 #define HD_ICON_H		64
 #define HD_EJECT_X		196
-#define HD_EJECT_Y		282
+#define HD_EJECT_Y		294
 #define HD_EJECT_HOT_X	190
-#define HD_EJECT_HOT_Y	278
+#define HD_EJECT_HOT_Y	290
 #define HD_EJECT_HOT_W	20
 #define HD_EJECT_HOT_H	16
 
@@ -60,8 +60,10 @@ static bool hardDriveEjectHovered = false;
 
 static const char cb1Text[] = "Automatically save state on exit";
 //static const char cb2Text[] = "Enable hard drive";
+static const char cb2Text[] = "Enable two-player controller support";
 static const char cb3Text[] = "Run Apple2 in full screen mode";
 //static const char cb4Text[] = "Automatically switch to Apple ][ mode for games that require it";
+static const char restartNote[] = "NOTE: Some settings require an emulator restart.";
 //static const char cbnText[] = "Don't check this box";
 //static const char le1Text[] = "HD1 location:";
 
@@ -224,6 +226,7 @@ void Config::Init(SDL_Renderer * renderer)
 
 	objList.push_back(new CheckBox(1, 1, &settings.autoStateSaving, cb1Text));
 //	objList.push_back(new CheckBox(1, 2, &cb2Checked, cb2Text));
+	objList.push_back(new CheckBox(1, 2, &settings.twoJoysticks, cb2Text));
 	objList.push_back(new CheckBox(1, 3, &settings.fullscreen, cb3Text));
 //	objList.push_back(new CheckBox(1, 4, &cb4Checked, cb4Text));
 
@@ -558,6 +561,10 @@ void Config::DrawElements(SDL_Renderer * renderer)
 //	SDL_Rect cbRect = { 108, FONT_HEIGHT * 7, 123, 99 };
 	SDL_Rect cbRect = { 108, FONT_HEIGHT * 7, 134, 110 };
 	SDL_RenderCopy(renderer, cardBay, NULL, &cbRect);
+
+	// Highlight settings that may require restarting the emulator.
+	const int noteColumn = (C_WIDTH / FONT_WIDTH - (int)strlen(restartNote)) / 2;
+	GUI::DrawString(renderer, noteColumn, 5, restartNote);
 
 	std::vector<void *>::iterator i;
 
