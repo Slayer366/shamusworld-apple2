@@ -24,13 +24,8 @@
 #include "firmware/firmware.h"
 #include "log.h"
 #include "mmu.h"
-#include "video.h"		// For message spawning... Though there's probably a
-						// better approach than this!
+#include "video.h"		// For message spawning
 
-// For testing 13-sector disk FW
-//#define TEST13
-
-// Useful enums
 
 enum { IO_MODE_READ, IO_MODE_WRITE };
 
@@ -247,11 +242,13 @@ bool FloppyDrive::RecentlyAccessed(uint64_t window) const
 
 FloppyDrive::~FloppyDrive()
 {
-	if (disk[0])
+	if (disk[0]) {
 		free(disk[0]);
+	}
 
-	if (disk[1])
+	if (disk[1]) {
 		free(disk[1]);
+	}
 }
 
 bool FloppyDrive::LoadImage(const char * filename, uint8_t driveNum/*= 0*/)
@@ -511,13 +508,9 @@ void FloppyDrive::SwapImages(void)
 	Swap(headPos[0], headPos[1]);
 	Swap(currentPos[0], currentPos[1]);
 
-//	SpawnMessage("Drive 0: %s...", imageName[0]);
 	SpawnMessage("*** DISKS SWAPPED ***");
 }
 
-/*
-Need to add some type of error checking here, so we can report back on bad images, etc. (basically, it does by returning DFT_UNKNOWN, but we could do better)
-*/
 bool FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum, bool forceDOS33, uint8_t volume)
 {
 	diskType[driveNum] = DFT_UNKNOWN;
@@ -567,7 +560,7 @@ bool FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum, bool 
 
 		WOZ2 & woz = *((WOZ2 *)wozData);
 
-		// Force every virtual track element to preserve the full raw nibble block capacity size
+		// Preserve the full raw nibble-block capacity for each virtual track.
 		for (uint32_t i = 0; i < 40; ++i)
 		{
 			woz.track[i].bitCount = Uint32LE(bytesPerTrack * 8);
@@ -613,10 +606,8 @@ bool FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum, bool 
 				{ 0x04, 0x00, 0x00, 0x00 }		// @ $A00
 			};
 
-//			bool foundProdos = true;
 			bool foundProdos = !forceDOS33;
 
-//			for(uint32_t i=0; i<4; i++)
 			for(uint32_t i=0; foundProdos && i<4; i++)
 			{
 				for(uint32_t j=0; j<4; j++)
@@ -652,9 +643,6 @@ bool FloppyDrive::DetectImageType(const char * filename, uint8_t driveNum, bool 
 		}
 	}
 
-// #warning "Should we attempt to nybblize unknown images here? Definitely SHOULD issue a warning!"
-// No, we don't nybblize anymore.  But we should tell the user that the loading failed with a return value
-
 	WriteLog("FLOPPY: Detected image type %s...\n", (diskType[driveNum] == DT_DOS33 ?
 		"DOS 3.3" : (diskType[driveNum] == DT_DOS33_HDR ?
 		"DOS 3.3 (headered)" : (diskType[driveNum] == DT_PRODOS ? "ProDOS" : (diskType[driveNum] == DT_NYBBLE ? "NIB/NB2" : (diskType[driveNum] == DT_WOZ ? "WOZ" : "unknown"))))));
@@ -686,12 +674,6 @@ void FloppyDrive::WriteBits(uint8_t * dest, const uint8_t * src, uint16_t bits, 
 
 bool FloppyDrive::WOZifyImage(uint8_t driveNum, uint8_t volume)
 {
-	// hdr (21) + nybbles (343) + footer (48) = 412 bytes per sector
-	// (not incl. 64 byte track marker)
-// let's try 394 per sector... & see what happens
-// let's go back to what we had, and see what happens  :-)
-// [still need to expand them back to what they were]
-
 	const uint8_t ff10[2] = { 0xFF, 0x00 };
 	uint8_t addressHeader[14] = {
 		0xD5, 0xAA, 0x96, 0xFF, 0xFE, 0x00, 0x00, 0x00,
@@ -732,7 +714,7 @@ bool FloppyDrive::WOZifyImage(uint8_t driveNum, uint8_t volume)
 		uint8_t * img = disk[driveNum] + (Uint16LE(woz.track[trk].startingBlock) * 512);
 //printf("Converting track %u: startingBlock=%u, %u blocks, img=%X\n", trk, Uint16LE(woz.track[trk].startingBlock), Uint16LE(woz.track[trk].blockCount), img);
 
-		// Write self-sync header bytes (16, should it be 64? Dunno.)
+		// Write 64 self-sync bytes before the sector records.
 		for(int i=0; i<64; i++)
 			WriteBits(img, ff10, 10, &dstBitPtr);
 
@@ -747,8 +729,6 @@ bool FloppyDrive::WOZifyImage(uint8_t driveNum, uint8_t volume)
 			addressHeader[6] =  (trk       & 0x55) | 0xAA;
 			addressHeader[7] = ((sector >> 1) & 0x55) | 0xAA;
 			addressHeader[8] =  (sector       & 0x55) | 0xAA;
-//			addressHeader[9] = (((trk ^ sector ^ 0xFE) >> 1) & 0x55) | 0xAA;
-//			addressHeader[10] = ((trk ^ sector ^ 0xFE)       & 0x55) | 0xAA;
 			addressHeader[9] = (((trk ^ sector ^ volume) >> 1) & 0x55) | 0xAA;
 			addressHeader[10] = ((trk ^ sector ^ volume)       & 0x55) | 0xAA;
 
@@ -762,7 +742,6 @@ bool FloppyDrive::WOZifyImage(uint8_t driveNum, uint8_t volume)
 			WriteBits(img, sectorHeader, 3 * 8, &dstBitPtr);
 			uint8_t * bytes = tmpDisk;
 
-//Need to fix this so it writes the correct sector in the correct place *and* put the correct sector # into the header above as well.  !!! FIX !!!
 			// Figure out location of sector data in disk image
 			if (diskType[driveNum] == DT_DOS33)
 				bytes += (doSector[sector] * 256) + (trk * 256 * 16);
@@ -804,7 +783,6 @@ bool FloppyDrive::WOZifyImage(uint8_t driveNum, uint8_t volume)
 			// Done with the nybblization, now add the epilogue...
 			WriteBits(img, footer, 3 * 8, &dstBitPtr);
 
-			// (Should the footer be 30 or 48? would be 45 FF10s here for 48)
 			for(int i=0; i<27; i++)
 				WriteBits(img, ff10, 10, &dstBitPtr);
 		}
@@ -1140,9 +1118,6 @@ N.B.: Though the NIB format is *closer* to the representation of the disk's
 According to Beneath Apple DOS, DOS checks the data register to see if it changes when spinning up a drive: "A sufficient delay should be provided to allow the motor time to come up to speed.  Shugart recommends one second, but DOS is able to reduce this delay by watching the read latch until data starts to change."  Which means, we can simulate an empty/off drive by leaving the data register alone.
 */
 
-uint64_t stepperTime = 0;
-bool seenReadSinceStep = false;
-uint16_t iorAddr;
 void FloppyDrive::ControlStepper(uint8_t addr)
 {
 	// $C0E0 - 7
@@ -1241,12 +1216,6 @@ If it ever *does* become a problem, doing the physical modeling of the head movi
 //		SpawnMessage("Stepping to track %u...", headPos[activeDrive] >> 2);
 	}
 
-	// only check the time since the phase was first set ON
-	if (addr & 0x01)
-	{
-		stepperTime = mainCPU.clock;
-		seenReadSinceStep = false;
-	}
 //WriteLog("FLOPPY: Stepper phase %d set to %s [%c%c%c%c] (track=%2.2f) [%u]\n", (addr >> 1) & 0x03, (addr & 0x01 ? "ON " : "off"), (phase[activeDrive] & 0x08 ? '|' : '.'), (phase[activeDrive] & 0x04 ? '|' : '.'), (phase[activeDrive] & 0x02 ? '|' : '.'), (phase[activeDrive] & 0x01 ? '|' : '.'), (float)headPos[activeDrive] / 4.0f, mainCPU.clock & 0xFFFFFFFF);
 }
 
@@ -1316,11 +1285,6 @@ uint8_t FloppyDrive::DataRegister(void)
 //			activeDrive, dataRegister, headPos[activeDrive] >> 2, (uint32_t)(((float)currentPos[activeDrive] / (float)bitLen) * 16.0f));
 		ioMode = IO_MODE_READ;
 		ioHappened = true;
-
-		if ((seenReadSinceStep == false) && (slSwitch == false) && (rwSwitch == false) && ((iorAddr & 0x0F) == 0x0C))
-		{
-			seenReadSinceStep = true;
-		}
 	}
 
 	uint8_t value = dataRegister;
@@ -1431,7 +1395,6 @@ $5A:    File structure damaged
 //
 //       According to EDD 4 the drive is running at 299.1 RPM...  :-/
 
-static bool logSeq = false;
 char sequence[1024];
 //
 // Logic State Sequencer & Data Register
@@ -1477,8 +1440,9 @@ void FloppyDrive::RunSequencer(uint32_t cyclesToRun)
 	uint32_t trackBytes = 0;
 	if (tIdx != 0xFF)
 	{
-		if (tIdx >= 160)
+		if (tIdx >= 160) {
 			return;
+		}
 		WOZTrack2 & track = woz.track[tIdx];
 		uint32_t start = (uint32_t)Uint16LE(track.startingBlock) * 512;
 		uint32_t capacity = (uint32_t)Uint16LE(track.blockCount) * 512;
@@ -1486,8 +1450,9 @@ void FloppyDrive::RunSequencer(uint32_t cyclesToRun)
 		trackBytes = (trackBits / 8) + ((trackBits & 7) ? 1 : 0);
 		if (start < 1536 || capacity == 0 || start > diskSize[activeDrive] ||
 			capacity > diskSize[activeDrive] - start || trackBits == 0 ||
-			trackBytes > capacity)
+			trackBytes > capacity) {
 			return;
+		}
 		tdata = disk[activeDrive] + start;
 	}
 
@@ -1496,7 +1461,8 @@ void FloppyDrive::RunSequencer(uint32_t cyclesToRun)
 		currentPos[activeDrive] = 0;
 	}
 
-	uint8_t pulseTiming = woz.optimalBitTmg / 4;
+//	uint8_t pulseTiming = woz.optimalBitTmg / 4;
+	uint8_t pulseTiming = (woz.optimalBitTmg == 28) ? 8 : (woz.optimalBitTmg / 4);
 	if (pulseTiming == 0) {
 		pulseTiming = 1;
 	}
@@ -1504,12 +1470,9 @@ void FloppyDrive::RunSequencer(uint32_t cyclesToRun)
 	// It's x2 because the sequencer clock runs twice as fast as the CPU clock.
 	cyclesToRun *= 2;
 
-uint8_t chop = 0;
+//uint8_t chop = 0;
 
-if (logSeq)
-{
-	WriteLog("DISKSEQ: Running for %d cycles [rw=%hhd, sl=%hhd, reg=%02X, bus=%02X]\n", cyclesToRun, rwSwitch, slSwitch, dataRegister, cpuDataBus);
-}
+//	WriteLog("DISKSEQ: Running for %d cycles [rw=%hhd, sl=%hhd, reg=%02X, bus=%02X]\n", cyclesToRun, rwSwitch, slSwitch, dataRegister, cpuDataBus);
 
 	while (cyclesToRun-- > 0)
 	{
@@ -1523,20 +1486,10 @@ if (logSeq)
 			uint8_t bitPos = currentPos[activeDrive] % 8;
 			window <<= 1;
 
-			if (tIdx != 0xFF && tdata != NULL && bytePos < trackBytes)
+			if (tIdx != 0xFF && tdata != NULL && bytePos < trackBytes && (tdata[bytePos] & bitMask[bitPos]))
 			{
-				if (tdata[bytePos] & bitMask[bitPos])
-				{
-					// According to Jim Sather (Understanding the Apple II),
-					// the Read Pulse, when it happens, is 1µs long, which is 2
-					// sequencer clock pulses long.  (Not sure where, elsewhere, on pg. 9-29 it says it lasts one *sequencer* clock pulse.)
-					readPulse = 1;//2;
-					zeroBitCount = 0;
 					window |= 0x01;
-				}
-				else
-					zeroBitCount++;
-//WriteLog("[%d]", tdata[bytePos] & bitMask[bitPos] ? 1 : 0);
+//					WriteLog("[%d]", tdata[bytePos] & bitMask[bitPos] ? 1 : 0);
 			}
 
 			// The Disk II read path is pulse-based for every image format.
@@ -1547,15 +1500,8 @@ if (logSeq)
 				currentPos[activeDrive] = 0;
 			}
 
-			// If we hit more than 2 zero bits in a row, simulate the disk head
-			// reader's Automatic Gain Control (AGC) turning itself up too high
-			// by stuffing random bits in the bitstream.  We also do this if
-			// the current track is marked as unformatted.
-/*
-N.B.: Had to up this to 3 because Up N' Down had some weird sync bytes (FE10).  May have to up it some more.
-*/
-//			if ((zeroBitCount > 3) || (tIdx == 0xFF))
-//			if (((window & 0x0F) == 0) || (tIdx == 0xFF))
+			// Inject occasional pulses when the recent bit window is all zero,
+			// or when the track is unformatted.
 			if (diskType[activeDrive] != DT_NYBBLE && (((window & 0x0F) == 0) || (tIdx == 0xFF)))
 			{
 				if (prng & 0x00001)
@@ -1573,28 +1519,12 @@ N.B.: Had to up this to 3 because Up N' Down had some weird sync bytes (FE10).  
 		uint8_t nextState = (sequencerState & 0xF0) | (rwSwitch << 3)
 			| (slSwitch << 2) | (readPulse ? 0x02 : 0)
 			| ((dataRegister & 0x80) >> 7);
-if (logSeq) {
-	WriteLog("[%02X:%02X]%s", sequencerState, nextState, (chop == 15 ? "\n" : ""));
-	chop = (chop + 1) % 20;
-}
-#ifndef TEST13
-		sequencerState = sequencerROM[nextState];
-#else
+
+//	WriteLog("[%02X:%02X]%s", sequencerState, nextState, (chop == 15 ? "\n" : ""));
+//	chop = (chop + 1) % 20;
+
 //		sequencerState = sequencerROM13[nextState];
 		sequencerState = sequencerROM[nextState];
-#endif
-
-#if 0
-uint32_t seqLen = strlen(sequence);
-
-if (seqLen + 7 > 1023)
-{
-	sequence[0] = 0;
-	seqLen = 0;
-}
-
-sprintf(&sequence[seqLen], "(%02X)%02X ", nextState, sequencerState);
-#endif
 
 		switch (sequencerState & 0x0F)
 		{
@@ -1616,8 +1546,7 @@ sprintf(&sequence[seqLen], "(%02X)%02X ", nextState, sequencerState);
 		case 0x09:
 			// SL0 (shift left, 0 fill LSB)
 			dataRegister <<= 1;
-//if (!stopWriting)
-{
+
 			if (rwSwitch && (tIdx != 0xFF) && tdata != NULL
 				&& (currentPos[activeDrive] / 8) < trackBytes && !woz.writeProtected)
 			{
@@ -1625,14 +1554,14 @@ sprintf(&sequence[seqLen], "(%02X)%02X ", nextState, sequencerState);
 				uint32_t bytePos = currentPos[activeDrive] / 8;
 				uint8_t bitPos = currentPos[activeDrive] % 8;
 
-				if (dataRegister & 0x80)
+				if (dataRegister & 0x80) {
 					// Fill in the one, if necessary
 					tdata[bytePos] |= bitMask[bitPos];
-				else
+				} else {
 					// Otherwise, punch in the zero
 					tdata[bytePos] &= ~bitMask[bitPos];
+				}
 			}
-}
 			break;
 		case 0x0A:
 //		case 0x0E:
@@ -1644,8 +1573,7 @@ sprintf(&sequence[seqLen], "(%02X)%02X ", nextState, sequencerState);
 //		case 0x0F:
 			// LD (load data register from data bus)
 			dataRegister = cpuDataBus;
-//if (!stopWriting)
-{
+
 			if (rwSwitch && (tIdx != 0xFF) && tdata != NULL
 				&& (currentPos[activeDrive] / 8) < trackBytes && !woz.writeProtected)
 			{
@@ -1654,7 +1582,6 @@ sprintf(&sequence[seqLen], "(%02X)%02X ", nextState, sequencerState);
 				uint8_t bitPos = currentPos[activeDrive] % 8;
 				tdata[bytePos] |= bitMask[bitPos];
 			}
-}
 			break;
 		case 0x0D:
 			// SL1 (shift left, 1 fill LSB)
@@ -1685,14 +1612,12 @@ sprintf(&sequence[seqLen], "(%02X)%02X ", nextState, sequencerState);
 			}
 		}
 
-
 		if (readPulse > 0) {
 			readPulse--;
 		}
 	}
 
-if (logSeq)
-	WriteLog("\n");
+//	WriteLog("\n");
 }
 
 FloppyDrive floppyDrive[2];
@@ -1731,10 +1656,7 @@ static uint8_t SlotIOR(uint16_t address)
 		break;
 	}
 
-//temp, for debugging
-iorAddr = address;
-	// Even addresses return the data register, odd (we suppose) returns a
-	// floating bus read...
+	// Even addresses return the data register, odd addresses return floating bus reads.
 	return (address & 0x01 ? ReadFloatingBus(0) : floppyDrive[0].DataRegister());
 }
 
@@ -1772,8 +1694,7 @@ static void SlotIOW(uint16_t address, uint8_t byte)
 		break;
 	}
 
-	// Odd addresses write to the Data register, even addresses (we assume) go
-	// into the ether
+	// Odd addresses write to the Data register, even addresses have no data effect.
 	if (state & 0x01)
 		floppyDrive[0].DataRegister(byte);
 }

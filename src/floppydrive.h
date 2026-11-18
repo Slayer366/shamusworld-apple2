@@ -103,7 +103,6 @@ class FloppyDrive
 		uint8_t pulseClock;		// Disk read head bitstream "pulse clock"
 		uint8_t sequencerState;
 		uint32_t driveOffTimeout;
-		uint8_t zeroBitCount;
 		uint32_t trackLength[2];
 //		uint8_t pulseTiming;	// WOZ disk "optimal" pulse timing (in 0.25µs)
 		uint8_t window;
