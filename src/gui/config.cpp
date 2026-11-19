@@ -303,6 +303,13 @@ void Config::MouseDown(int32_t x, int32_t y, uint32_t buttons)
 			if (cb->hovered)
 			{
 				*(cb->state) = !(*(cb->state));
+
+				// Enabling two-player controller support also enables joystick input.
+				// Disabling two-player support must not disable joystick input.
+				if (cb->state == &settings.twoJoysticks && settings.twoJoysticks) {
+					settings.useJoystick = true;
+				}
+
 				refresh = true;
 			}
 
