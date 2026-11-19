@@ -30,12 +30,12 @@
 #define HD_ICON_Y		222
 #define HD_ICON_W		52
 #define HD_ICON_H		64
-#define HD_EJECT_X		196
-#define HD_EJECT_Y		294
-#define HD_EJECT_HOT_X	190
-#define HD_EJECT_HOT_Y	290
+#define HD_EJECT_X		195
+#define HD_EJECT_Y		291
+#define HD_EJECT_HOT_X	191
+#define HD_EJECT_HOT_Y	287
 #define HD_EJECT_HOT_W	20
-#define HD_EJECT_HOT_H	16
+#define HD_EJECT_HOT_H	18
 
 static SDL_Texture * window = NULL;
 static SDL_Texture * hardDriveIcon = NULL;
@@ -93,14 +93,16 @@ static const char cbUnchecked[(9 * 11) + 1] =
 	" @    @  "
 	" @@@@@@  ";
 
-static const char ejectGlyph[(8 * 7) + 1] =
-	"   @@   "
-	"  @@@@  "
-	" @@@@@@ "
-	"@@@@@@@@"
-	"        "
-	"@@@@@@@@"
-	"@@@@@@@@";
+static const char ejectGlyph[(10 * 9) + 1] =
+	"    @@    "
+	"   @@@@   "
+	"  @@@@@@  "
+	" @@@@@@@@ "
+	"@@@@@@@@@@"
+	"          "
+	"@@@@@@@@@@"
+	"@@@@@@@@@@"
+	"@@@@@@@@@@";
 
 static const char slotNum[7][(5 * 5) + 1] =
 {
@@ -562,9 +564,10 @@ void Config::DrawElements(SDL_Renderer * renderer)
 	SDL_Rect cbRect = { 108, FONT_HEIGHT * 7, 134, 110 };
 	SDL_RenderCopy(renderer, cardBay, NULL, &cbRect);
 
-	// Highlight settings that may require restarting the emulator.
+	// Display note that some settings may require restarting the emulator.
 	const int noteColumn = (C_WIDTH / FONT_WIDTH - (int)strlen(restartNote)) / 2;
-	GUI::DrawString(renderer, noteColumn, 5, restartNote);
+//	GUI::DrawString(renderer, noteColumn, 5, restartNote);
+	GUI::DrawStringColor(renderer, noteColumn, 5, restartNote, 0x10, 0xFF, 0xFF);
 
 	std::vector<void *>::iterator i;
 
@@ -625,7 +628,7 @@ void Config::DrawElements(SDL_Renderer * renderer)
 
 	if (HardDriveIsMounted()) {
 		GUI::DrawCharArray(renderer, ejectGlyph, HD_EJECT_X, HD_EJECT_Y,
-			8, 7, hardDriveEjectHovered ? 0x20 : 0x00,
+			10, 9, hardDriveEjectHovered ? 0x20 : 0x00,
 			hardDriveEjectHovered ? 0xFF : 0xAA,
 			hardDriveEjectHovered ? 0x20 : 0x00);
 	}

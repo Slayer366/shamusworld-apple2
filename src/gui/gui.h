@@ -34,6 +34,7 @@ class GUI
 		static void DrawCharacter(SDL_Renderer *, int, int, uint8_t, bool inv = false);
 		static void DrawCharacterVert(SDL_Renderer *, int, int, uint8_t, bool inv = false);
 		static void DrawString(SDL_Renderer *, int, int, const char *, bool inv = false);
+		static void DrawStringColor(SDL_Renderer *, int, int, const char *, uint8_t, uint8_t, uint8_t);
 		static void DrawStringVert(SDL_Renderer *, int, int, const char *, bool inv = false);
 		static void DrawBox(SDL_Renderer *, int, int, int, int, int r = 0x00, int g = 0xAA, int b = 0x00);
 		static void HandleGUIState(void);

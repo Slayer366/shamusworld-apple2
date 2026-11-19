@@ -76,14 +76,16 @@ const char numeralTwo[(7 * 7) + 1] =
 	"@@     "
 	"@@@@@@@";
 
-const char ejectIcon[(8 * 7) + 1] =
-	"   @@   "
-	"  @@@@  "
-	" @@@@@@ "
-	"@@@@@@@@"
-	"        "
-	"@@@@@@@@"
-	"@@@@@@@@";
+const char ejectIcon[(10 * 9) + 1] =
+	"    @@    "
+	"   @@@@   "
+	"  @@@@@@  "
+	" @@@@@@@@ "
+	"@@@@@@@@@@"
+	"          "
+	"@@@@@@@@@@"
+	"@@@@@@@@@@"
+	"@@@@@@@@@@";
 
 const char newDiskIcon[(30 * 6) + 1] =
 	"@@   @@ @@@@@ @@   @@     @@  "
@@ -435,15 +437,15 @@ void GUI::MouseMove(int32_t x, int32_t y, uint32_t buttons)
 				iconSelected = (y - 4) / 54;
 
 			// It's y+2 because the sidebar sits at (SIDEBAR_X_POS, 2)
-			disk1EjectHovered = ((x >= (SIDEBAR_X_POS + 24 + 29))
-				&& (x < (SIDEBAR_X_POS + 24 + 29 + 8))
-				&& (y >= (63 + 31 + 2))
-				&& (y < (63 + 31 + 2 + 7)) ? true : false);
+			disk1EjectHovered = ((x >= (SIDEBAR_X_POS + 24 + 27))
+				&& (x < (SIDEBAR_X_POS + 24 + 27 + 14))
+				&& (y >= (63 + 31 + 2 - 4))
+				&& (y < (63 + 31 + 2 - 4 + 18)) ? true : false);
 
-			disk2EjectHovered = ((x >= (SIDEBAR_X_POS + 24 + 29))
-				&& (x < (SIDEBAR_X_POS + 24 + 29 + 8))
-				&& (y >= (117 + 31 + 2))
-				&& (y < (117 + 31 + 2 + 7)) ? true : false);
+			disk2EjectHovered = ((x >= (SIDEBAR_X_POS + 24 + 27))
+				&& (x < (SIDEBAR_X_POS + 24 + 27 + 14))
+				&& (y >= (117 + 31 + 2 - 4))
+				&& (y < (117 + 31 + 2 - 4 + 18)) ? true : false);
 
 			disk1NewDiskHovered = ((x >= (SIDEBAR_X_POS + 24 + 6))
 				&& (x < (SIDEBAR_X_POS + 24 + 6 + 30))
@@ -608,7 +610,7 @@ void GUI::DrawEjectButton(SDL_Renderer * renderer, int driveNumber)
 		|| (driveNumber == 1 && disk2EjectHovered))
 		r = 0x20, g = 0xFF, b = 0x20;
 
-	DrawCharArray(renderer, ejectIcon, 29, 31, 8, 7, r, g, b);
+	DrawCharArray(renderer, ejectIcon, 29, 31, 10, 9, r, g, b);
 }
 
 
@@ -720,6 +722,31 @@ void GUI::DrawString(SDL_Renderer * renderer, int x, int y, const char * s, bool
 
 	for(int i=0; i<len; i++)
 		DrawCharacter(renderer, x + i, y, s[i], invert);
+}
+
+
+void GUI::DrawStringColor(SDL_Renderer * renderer, int x, int y, const char * s,
+	uint8_t r, uint8_t g, uint8_t b)
+{
+	// The cached font glyphs are gold (RGB 255, 255, 192). Convert the
+	// requested output color into SDL's multiplicative texture modulation.
+	const uint8_t blueMod = (b >= 192) ? 0xFF :
+		static_cast<uint8_t>((static_cast<unsigned>(b) * 255 + 96) / 192);
+	if (glyphAtlas) {
+		SDL_SetTextureColorMod(glyphAtlas, r, g, blueMod);
+	}
+	if (charStamp) {
+		SDL_SetTextureColorMod(charStamp, r, g, blueMod);
+	}
+
+	DrawString(renderer, x, y, s);
+
+	if (glyphAtlas) {
+		SDL_SetTextureColorMod(glyphAtlas, 0xFF, 0xFF, 0xFF);
+	}
+	if (charStamp) {
+		SDL_SetTextureColorMod(charStamp, 0xFF, 0xFF, 0xFF);
+	}
 }
 
 
