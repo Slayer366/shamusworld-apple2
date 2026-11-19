@@ -461,11 +461,17 @@ void Config::MouseMove(int32_t x, int32_t y, uint32_t buttons)
 		{
 			CheckBox * cb = (CheckBox *)obj;
 			bool oldHover = cb->hovered;
+/*
 			cb->hovered = (((nx >= ((cb->r.x * FONT_WIDTH) + 1))
 //				&& (nx <= ((cb->r.x * FONT_WIDTH) + 6))
 				&& (nx <= ((cb->r.x * FONT_WIDTH) + 7))
 				&& (ny >= ((cb->r.y * FONT_HEIGHT) + 3))
 				&& (ny <= ((cb->r.y * FONT_HEIGHT) + 8))) ? true : false);
+*/
+			cb->hovered = (((nx >= ((cb->r.x * FONT_WIDTH) - 2))
+				&& (nx <= ((cb->r.x * FONT_WIDTH) + 11))
+				&& (ny >= ((cb->r.y * FONT_HEIGHT) - 2))
+				&& (ny <= ((cb->r.y * FONT_HEIGHT) + 10))) ? true : false);
 
 			if (oldHover != cb->hovered)
 				refresh = true;
