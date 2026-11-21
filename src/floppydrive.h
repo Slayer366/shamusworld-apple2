@@ -19,6 +19,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <mutex>
 
 enum { DT_EMPTY = 0, DT_WOZ, DT_DOS33, DT_DOS33_HDR, DT_PRODOS, DT_NYBBLE,
 	DFT_UNKNOWN };
@@ -56,10 +57,10 @@ class FloppyDrive
 		void ControlStepper(uint8_t addr);
 		void ControlMotor(uint8_t addr);
 
-		bool IsMotorOn(void) const { return motorOn != 0; }
-		// Disk turbo support: is there an image in the active drive, and has the
+		bool IsMotorOn(void) const;
+		// Disk turbo support: is there a usable image in the active drive, and has the
 		// CPU touched the disk (data register or head stepper) within 'window' cycles?
-		bool HasDisk(void) const { return (activeDrive < 2) && diskImageReady && (diskType[activeDrive] != DT_EMPTY) && (diskType[activeDrive] != DFT_UNKNOWN); }
+		bool HasDisk(void) const;
 		bool RecentlyAccessed(uint64_t window) const;
 
 		void DriveEnable(uint8_t addr);
@@ -89,7 +90,11 @@ class FloppyDrive
 		uint8_t phase[2];
 		uint8_t headPos[2];
 		bool ioHappened;
-		bool diskImageReady;
+		// Protect image pointers and all drive state shared by the CPU and GUI
+		// threads. Recursive because public operations call other public helpers
+		// (e.g. EjectImage -> SaveImage, LoadState -> EjectImage).
+		mutable std::recursive_mutex stateMutex;
+		bool DriveHasUsableImage(uint8_t driveNum) const;
 
 		uint64_t lastAccessClock;	// CPU clock of the last disk data/stepper access
 		bool accessSeen;

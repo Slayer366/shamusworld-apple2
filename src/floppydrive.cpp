@@ -217,7 +217,7 @@ static inline void Swap(uint8_t * & a, uint8_t * & b)
 //
 // FloppyDrive class implementation...
 //
-FloppyDrive::FloppyDrive(): motorOn(0), activeDrive(0), ioMode(IO_MODE_READ),  ioHappened(false), diskImageReady(false)
+FloppyDrive::FloppyDrive(): motorOn(0), activeDrive(0), ioMode(IO_MODE_READ),  ioHappened(false)
 {
 	phase[0] = phase[1] = 0;
 	headPos[0] = headPos[1] = 0;
@@ -235,8 +235,27 @@ FloppyDrive::FloppyDrive(): motorOn(0), activeDrive(0), ioMode(IO_MODE_READ),  i
 	nibLatchAge = 0;
 }
 
+bool FloppyDrive::DriveHasUsableImage(uint8_t driveNum) const
+{
+	return driveNum < 2 && disk[driveNum] != NULL && diskSize[driveNum] >= 1536 &&
+		diskType[driveNum] != DT_EMPTY && diskType[driveNum] != DFT_UNKNOWN;
+}
+
+bool FloppyDrive::IsMotorOn(void) const
+{
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+	return motorOn != 0;
+}
+
+bool FloppyDrive::HasDisk(void) const
+{
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+	return activeDrive < 2 && DriveHasUsableImage(activeDrive);
+}
+
 bool FloppyDrive::RecentlyAccessed(uint64_t window) const
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
 	return accessSeen && ((mainCPU.clock - lastAccessClock) < window);
 }
 
@@ -253,6 +272,8 @@ FloppyDrive::~FloppyDrive()
 
 bool FloppyDrive::LoadImage(const char * filename, uint8_t driveNum/*= 0*/)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	WriteLog("FLOPPY: Attempting to load image '%s' in drive #%u.\n", filename, driveNum);
 
 	if (driveNum > 1 || filename == NULL)
@@ -376,9 +397,7 @@ bool FloppyDrive::LoadImage(const char * filename, uint8_t driveNum/*= 0*/)
 	uint8_t oldDiskType = diskType[driveNum];
 	uint32_t oldTrackLength = trackLength[driveNum];
 	uint32_t oldCurrentPos = currentPos[driveNum];
-	bool oldReady = diskImageReady;
 
-	diskImageReady = false;
 	disk[driveNum] = buffer;
 	diskSize[driveNum] = newDiskSize;
 	diskType[driveNum] = DFT_UNKNOWN;
@@ -391,7 +410,6 @@ bool FloppyDrive::LoadImage(const char * filename, uint8_t driveNum/*= 0*/)
 		diskType[driveNum] = oldDiskType;
 		trackLength[driveNum] = oldTrackLength;
 		currentPos[driveNum] = oldCurrentPos;
-		diskImageReady = oldReady;
 		WriteLog("FLOPPY: Rejected unsupported or invalid image '%s'.\n", filename);
 		return false;
 	}
@@ -410,7 +428,6 @@ bool FloppyDrive::LoadImage(const char * filename, uint8_t driveNum/*= 0*/)
 	nibLatchAge = 0;
 	strncpy(imageName[driveNum], filename, MAX_PATH);
 	imageName[driveNum][MAX_PATH - 1] = 0;
-	diskImageReady = true;
 
 	WriteLog("FLOPPY: Loaded image '%s' for drive #%u.\n", filename, driveNum);
 
@@ -419,6 +436,8 @@ bool FloppyDrive::LoadImage(const char * filename, uint8_t driveNum/*= 0*/)
 
 bool FloppyDrive::SaveImage(uint8_t driveNum/*= 0*/)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	// Various sanity checks...
 	if (driveNum > 1)
 	{
@@ -454,6 +473,8 @@ bool FloppyDrive::SaveImage(uint8_t driveNum/*= 0*/)
 
 bool FloppyDrive::SaveImageAs(const char * filename, uint8_t driveNum/*= 0*/)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	if (driveNum > 1 || filename == NULL) {
 		return false;
 	}
@@ -467,6 +488,8 @@ bool FloppyDrive::SaveImageAs(const char * filename, uint8_t driveNum/*= 0*/)
 
 void FloppyDrive::CreateBlankImage(uint8_t driveNum/*= 0*/)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	if (driveNum > 1) {
 		return;
 	}
@@ -486,13 +509,17 @@ void FloppyDrive::CreateBlankImage(uint8_t driveNum/*= 0*/)
 	imageDirty[driveNum] = false;
 	trackLength[driveNum] = 51200;
 	currentPos[driveNum] = 0;
-	strcpy(imageName[driveNum], "newblank.woz");
-	diskImageReady = true;
-	SpawnMessage("New blank image inserted in drive %u...", driveNum);
+	nibPrevValid = false;
+	nibLatchPending = false;
+	nibLatchAge = 0;
+	strcpy(imageName[driveNum], driveNum == 0 ? "newblank.woz" : "newblank2.woz");
+	SpawnMessage("New blank image inserted in drive %u...", driveNum + 1);
 }
 
 void FloppyDrive::SwapImages(void)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	char imageNameTmp[MAX_PATH];
 
 	memcpy(imageNameTmp, imageName[0], MAX_PATH);
@@ -507,6 +534,7 @@ void FloppyDrive::SwapImages(void)
 	Swap(phase[0], phase[1]);
 	Swap(headPos[0], headPos[1]);
 	Swap(currentPos[0], currentPos[1]);
+	Swap(trackLength[0], trackLength[1]);
 
 	SpawnMessage("*** DISKS SWAPPED ***");
 }
@@ -800,6 +828,8 @@ bool FloppyDrive::WOZifyImage(uint8_t driveNum, uint8_t volume)
 
 const char * FloppyDrive::ImageName(uint8_t driveNum/*= 0*/)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	// Set up a zero-length string for return value
 	nameBuf[0] = 0;
 
@@ -836,6 +866,8 @@ const char * FloppyDrive::ImageName(uint8_t driveNum/*= 0*/)
 
 void FloppyDrive::EjectImage(uint8_t driveNum/*= 0*/)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	// Sanity check
 	if (driveNum > 1 || diskType[driveNum] == DT_EMPTY) {
 		return;
@@ -855,10 +887,17 @@ void FloppyDrive::EjectImage(uint8_t driveNum/*= 0*/)
 	diskType[driveNum] = DT_EMPTY;
 	imageDirty[driveNum] = false;
 	imageName[driveNum][0] = 0;			// Zero out filenames
+	if (activeDrive == driveNum) {
+		nibPrevValid = false;
+		nibLatchPending = false;
+		nibLatchAge = 0;
+	}
 }
 
 bool FloppyDrive::IsEmpty(uint8_t driveNum/*= 0*/)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	if (driveNum > 1)
 	{
 		WriteLog("FLOPPY: Attempted DriveIsEmtpy() for drive #%u!\n", driveNum);
@@ -870,6 +909,8 @@ bool FloppyDrive::IsEmpty(uint8_t driveNum/*= 0*/)
 
 bool FloppyDrive::IsWriteProtected(uint8_t driveNum/*= 0*/)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	if (driveNum > 1)
 	{
 		WriteLog("FLOPPY: Attempted DiskIsWriteProtected() for drive #%u!\n", driveNum);
@@ -888,6 +929,8 @@ bool FloppyDrive::IsWriteProtected(uint8_t driveNum/*= 0*/)
 
 void FloppyDrive::SetWriteProtect(bool state, uint8_t driveNum/*= 0*/)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	if (driveNum > 1)
 	{
 		WriteLog("FLOPPY: Attempted set write protect for drive #%u!\n", driveNum);
@@ -906,13 +949,17 @@ void FloppyDrive::SetWriteProtect(bool state, uint8_t driveNum/*= 0*/)
 
 int FloppyDrive::DriveLightStatus(uint8_t driveNum/*= 0*/)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	int retval = DLS_OFF;
 
-	if (activeDrive != driveNum)
+	if (activeDrive != driveNum) {
 		return DLS_OFF;
+	}
 
-	if (ioHappened)
+	if (ioHappened) {
 		retval = (ioMode == IO_MODE_READ ? DLS_READ : DLS_WRITE);
+	}
 
 	ioHappened = false;
 	return retval;
@@ -920,6 +967,8 @@ int FloppyDrive::DriveLightStatus(uint8_t driveNum/*= 0*/)
 
 void FloppyDrive::SaveState(FILE * file)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	// Internal state vars
 	fputc(motorOn, file);
 	fputc(activeDrive, file);
@@ -960,6 +1009,8 @@ void FloppyDrive::SaveState(FILE * file)
 
 void FloppyDrive::LoadState(FILE * file)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	if (file == NULL) {
 		return;
 	}
@@ -1042,7 +1093,6 @@ void FloppyDrive::LoadState(FILE * file)
 		disk[0] = disk[1] = NULL;
 		diskSize[0] = diskSize[1] = 0;
 		diskType[0] = diskType[1] = DT_EMPTY;
-		diskImageReady = false;
 		WriteLog("FLOPPY: Rejected truncated or invalid floppy state.\n");
 		return;
 	}
@@ -1064,7 +1114,6 @@ void FloppyDrive::LoadState(FILE * file)
 		memcpy(imageName[drive], loadedName[drive], MAX_PATH);
 		trackLength[drive] = 51200;
 	}
-	diskImageReady = (disk[0] != NULL || disk[1] != NULL);
 	nibPrevValid = false;
 	nibLatchPending = false;
 	nibLatchAge = 0;
@@ -1120,6 +1169,8 @@ According to Beneath Apple DOS, DOS checks the data register to see if it change
 
 void FloppyDrive::ControlStepper(uint8_t addr)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	// $C0E0 - 7
 /*
 How It Works
@@ -1158,8 +1209,7 @@ If it ever *does* become a problem, doing the physical modeling of the head movi
 	};
 
 	// Sanity check
-	if (activeDrive > 1 || !diskImageReady || diskType[activeDrive] == DT_EMPTY ||
-		diskType[activeDrive] == DFT_UNKNOWN || disk[activeDrive] == NULL || diskSize[activeDrive] < 1536)
+	if (activeDrive > 1 || !DriveHasUsableImage(activeDrive))
 	{
 		return;
 	}
@@ -1221,6 +1271,8 @@ If it ever *does* become a problem, doing the physical modeling of the head movi
 
 void FloppyDrive::ControlMotor(uint8_t addr)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	// $C0E8 - 9
 	motorOn = addr;
 
@@ -1236,6 +1288,8 @@ void FloppyDrive::ControlMotor(uint8_t addr)
 
 void FloppyDrive::DriveEnable(uint8_t addr)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	// $C0EA - B
 	if (addr > 1) {
 		return;
@@ -1262,12 +1316,16 @@ Looks like reads from even addresses in $C080-F block transfer data from the seq
 
 void FloppyDrive::SetShiftLoadSwitch(uint8_t state)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	// $C0EC - D
 	slSwitch = state;
 }
 
 void FloppyDrive::SetReadWriteSwitch(uint8_t state)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	// $C0EE - F
 	rwSwitch = state;
 }
@@ -1275,9 +1333,10 @@ void FloppyDrive::SetReadWriteSwitch(uint8_t state)
 // MMIO: Reads from $C08x to $C0XX on even addresses
 uint8_t FloppyDrive::DataRegister(void)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	// Sanity check
-	if (activeDrive < 2 && diskImageReady && disk[activeDrive] != NULL &&
-		(diskType[activeDrive] != DT_EMPTY) && (diskType[activeDrive] != DFT_UNKNOWN))
+	if (activeDrive < 2 && DriveHasUsableImage(activeDrive))
 	{
 		lastAccessClock = mainCPU.clock;
 		accessSeen = true;
@@ -1294,7 +1353,7 @@ uint8_t FloppyDrive::DataRegister(void)
 	// CPU never got to read, hand it over once, within the grace period.
 	// A byte that is read while still valid is marked consumed, so nothing
 	// is ever delivered twice.
-	if (activeDrive < 2 && diskImageReady && disk[activeDrive] != NULL &&
+	if (activeDrive < 2 && DriveHasUsableImage(activeDrive) &&
 		(diskType[activeDrive] == DT_NYBBLE) && !slSwitch && !rwSwitch)
 	{
 		if (value & 0x80) {
@@ -1313,6 +1372,8 @@ uint8_t FloppyDrive::DataRegister(void)
 // MMIO: Writes from $C08x to $C0XX on odd addresses
 void FloppyDrive::DataRegister(uint8_t data)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	cpuDataBus = data;
 	ioMode = IO_MODE_WRITE;
 	ioHappened = true;
@@ -1401,12 +1462,12 @@ char sequence[1024];
 //
 void FloppyDrive::RunSequencer(uint32_t cyclesToRun)
 {
+	std::lock_guard<std::recursive_mutex> lock(stateMutex);
+
 	static uint32_t prng = 1;
 
 	// Sanity checks
-	if (activeDrive > 1 || !diskImageReady || disk[activeDrive] == NULL ||
-		diskType[activeDrive] == DT_EMPTY || diskType[activeDrive] == DFT_UNKNOWN ||
-		diskSize[activeDrive] < 1536)
+	if (activeDrive > 1 || !DriveHasUsableImage(activeDrive))
 	{
 		return;
 	}

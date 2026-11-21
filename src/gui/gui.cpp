@@ -303,20 +303,6 @@ void GUI::MouseDown(int32_t x, int32_t y, uint32_t buttons)
 	case 1:
 		SpawnMessage("*** DISK #1 ***");
 
-#if 0
-		if (disk1EjectHovered && !floppyDrive[0].IsEmpty(0))
-		{
-			floppyDrive[0].EjectImage(0);
-			SpawnMessage("*** DISK #1 EJECTED ***");
-		}
-
-		if (!disk1EjectHovered && !disk1NewDiskHovered)
-		{
-			// Load the disk selector
-			Config::HideWindow();
-			DiskSelector::ShowWindow(0);
-		}
-#else
 		if (disk1EjectHovered)
 		{
 			if (!floppyDrive[0].IsEmpty(0))
@@ -329,8 +315,9 @@ void GUI::MouseDown(int32_t x, int32_t y, uint32_t buttons)
 		{
 			if (disk1NewDiskHovered)
 			{
-				if (!floppyDrive[0].IsEmpty(0))
+				if (!floppyDrive[0].IsEmpty(0)) {
 					floppyDrive[0].EjectImage(0);
+				}
 
 				floppyDrive[0].CreateBlankImage(0);
 			}
@@ -341,20 +328,29 @@ void GUI::MouseDown(int32_t x, int32_t y, uint32_t buttons)
 				DiskSelector::ShowWindow(0);
 			}
 		}
-#endif
 
 		break;
 	// Disk #2
 	case 2:
 		SpawnMessage("*** DISK #2 ***");
 
-		if (disk2EjectHovered && !floppyDrive[0].IsEmpty(1))
+		if (disk2EjectHovered)
 		{
-			floppyDrive[0].EjectImage(1);
-			SpawnMessage("*** DISK #2 EJECTED ***");
+			if (!floppyDrive[0].IsEmpty(1))
+			{
+				floppyDrive[0].EjectImage(1);
+				SpawnMessage("*** DISK #2 EJECTED ***");
+			}
 		}
+		else if (disk2NewDiskHovered)
+		{
+			if (!floppyDrive[0].IsEmpty(1)) {
+				floppyDrive[0].EjectImage(1);
+			}
 
-		if (!disk2EjectHovered && !disk2NewDiskHovered)
+			floppyDrive[0].CreateBlankImage(1);
+		}
+		else
 		{
 			// Load the disk selector
 			Config::HideWindow();
