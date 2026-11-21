@@ -424,6 +424,7 @@ void DiskSelector::FindHardDisks(const char * path)
 			if ((ext != NULL)
 				&& ((strcasecmp(ext, ".2mg") == 0)
 					|| (strcasecmp(ext, ".2img") == 0)
+					|| (strcasecmp(ext, ".po") == 0)
 					|| (strcasecmp(ext, ".hdv") == 0)))
 			{
 				FileStruct fs;
