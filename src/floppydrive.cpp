@@ -185,6 +185,14 @@ static const uint8_t sequencerROM13[256] = {
 #endif
 static char nameBuf[MAX_PATH];
 
+// Synthetic images (NIB/NB2 and the sector formats we nibblize ourselves) have
+// no sub-nibble timing at all, so nothing on them can legitimately depend on
+// the exact moment the LSS clears the data register.  Real WOZ images may.
+static inline bool IsSyntheticType(uint8_t type)
+{
+	return type == DT_NYBBLE || type == DT_DOS33 || type == DT_DOS33_HDR || type == DT_PRODOS;
+}
+
 // Static in-line functions, for clarity & speed, for swapping variables
 static inline void Swap(uint8_t & a, uint8_t & b)
 {
@@ -1354,7 +1362,7 @@ uint8_t FloppyDrive::DataRegister(void)
 	// A byte that is read while still valid is marked consumed, so nothing
 	// is ever delivered twice.
 	if (activeDrive < 2 && DriveHasUsableImage(activeDrive) &&
-		(diskType[activeDrive] == DT_NYBBLE) && !slSwitch && !rwSwitch)
+		IsSyntheticType(diskType[activeDrive]) && !slSwitch && !rwSwitch)
 	{
 		if (value & 0x80) {
 			nibLatchPending = false;
@@ -1654,8 +1662,8 @@ void FloppyDrive::RunSequencer(uint32_t cyclesToRun)
 			WriteLog("Invalid LSS state encountered! (opcode: $%X [full state: $%02X])\n", sequencerState & 0x0F, sequencerState);
 		}
 
-		// NIB only: remember a newly completed byte for the grace latch
-		if (diskType[activeDrive] == DT_NYBBLE)
+		// Synthetic images only: remember a newly completed byte for the grace latch
+		if (IsSyntheticType(diskType[activeDrive]))
 		{
 			bool nowValid = ((dataRegister & 0x80) != 0);
 
